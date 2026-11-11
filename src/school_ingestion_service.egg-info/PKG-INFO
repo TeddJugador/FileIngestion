@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: school-ingestion-service
+Version: 0.1.0
+Summary: Serverless bulk file ingestion for a multi-tenant school management system
+Requires-Python: >=3.12
+Provides-Extra: infra
+Requires-Dist: aws-cdk-lib<3,>=2.276.0; extra == "infra"
+Requires-Dist: constructs<11,>=10.8; extra == "infra"
+Requires-Dist: cdk-nag<4,>=3.0.2; extra == "infra"
+Provides-Extra: runtime
+Requires-Dist: aws-lambda-powertools[tracer]==3.40.0; extra == "runtime"
+Requires-Dist: pydantic==2.14.3; extra == "runtime"
+Requires-Dist: ijson==3.6.0; extra == "runtime"
+Requires-Dist: python-ulid==4.1.0; extra == "runtime"
+Requires-Dist: email-validator==2.3.0; extra == "runtime"
+Requires-Dist: boto3>=1.40; extra == "runtime"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: moto[dynamodb,events,s3,sqs]>=5.1; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
+Requires-Dist: mypy>=1.13; extra == "dev"
+Requires-Dist: boto3-stubs[dynamodb,events,s3,sqs]>=1.40; extra == "dev"

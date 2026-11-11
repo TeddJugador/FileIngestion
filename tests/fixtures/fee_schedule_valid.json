@@ -1,0 +1,4 @@
+[
+  {"grade_code": "R", "term_code": "2027-T1", "fee_item": "Tuition", "amount_cents": 850000, "currency": "ZAR"},
+  {"grade_code": "10", "term_code": "2027-T1", "fee_item": "Tuition", "amount_cents": 1250000, "currency": "ZAR"}
+]

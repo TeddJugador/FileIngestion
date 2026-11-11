@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types, tests, layer, synth
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Same version as the Lambda runtime (single source of truth).
+          python-version-file: .lambda-python-version
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[infra,runtime,dev]"
+          npm install -g aws-cdk
+
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Type check (mypy --strict on src/)
+        run: mypy
+
+      - name: Unit and infrastructure tests (including slow)
+        run: pytest
+
+      - name: Build arm64 dependency layer
+        run: ./scripts/build_layer.sh
+
+      - name: Synthesize (fails on any unacknowledged cdk-nag finding)
+        run: cdk synth --quiet
+
+  deploy:
+    name: Deploy to dev and run integration tests
+    needs: checks
+    # Runs only on pushes to main, once the deploy role is configured (see README).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: dev
+    permissions:
+      id-token: write # GitHub OIDC: short-lived AWS credentials, no stored keys
+      contents: read
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .lambda-python-version
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[infra,runtime,dev]"
+          npm install -g aws-cdk
+
+      - name: Build arm64 dependency layer
+        run: ./scripts/build_layer.sh
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy
+        env:
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+        # Without -c alertEmail the email subscription would be removed, so pass it
+        # whenever the ALERT_EMAIL variable is set.
+        run: cdk deploy --all --require-approval never ${ALERT_EMAIL:+-c alertEmail=$ALERT_EMAIL}
+
+      - name: Integration tests against the deployed stacks
+        run: pytest -m integration

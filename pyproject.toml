@@ -1,0 +1,62 @@
+[project]
+name = "school-ingestion-service"
+version = "0.1.0"
+description = "Serverless bulk file ingestion for a multi-tenant school management system"
+requires-python = ">=3.12"
+# Runtime dependencies are shipped in the Lambda layer (layer/requirements.txt).
+
+[project.optional-dependencies]
+infra = [
+    "aws-cdk-lib>=2.276.0,<3",
+    "constructs>=10.8,<11",
+    "cdk-nag>=3.0.2,<4",
+]
+runtime = [
+    "aws-lambda-powertools[tracer]==3.40.0",
+    "pydantic==2.14.3",
+    "ijson==3.6.0",
+    "python-ulid==4.1.0",
+    "email-validator==2.3.0",
+    "boto3>=1.40",
+]
+dev = [
+    "pytest>=8",
+    "moto[s3,sqs,dynamodb,events]>=5.1",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "boto3-stubs[s3,sqs,dynamodb,events]>=1.40",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra --strict-markers -m 'not integration'"
+markers = [
+    "slow: slow under moto, but still run in CI",
+    "integration: deploys to a real AWS account (opt-in: pytest -m integration)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["cdk.out", "build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "PT", "TID", "ANN"]
+ignore = ["S101"]  # assert is fine in tests and CDK type narrowing
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ANN401"]
+# CDK stacks forward **kwargs (env, description, ...) to Stack unchanged.
+"infra/*_stack.py" = ["ANN401"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["ijson", "ijson.*"]
+ignore_missing_imports = true

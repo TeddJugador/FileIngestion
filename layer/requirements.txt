@@ -1,0 +1,10 @@
+# Dependencies layer for the ingestion Lambdas (arm64, built by scripts/build_layer.sh).
+# Pinned for reproducible builds. boto3/botocore come from the Lambda runtime and are
+# stripped from the layer after install.
+# [tracer] pulls in aws-xray-sdk, which Powertools Tracer needs.
+aws-lambda-powertools[tracer]==3.40.0
+pydantic==2.14.3
+ijson==3.6.0
+python-ulid==4.1.0
+# EmailStr (roster guardian_email). Deliverability (DNS) checks stay off.
+email-validator==2.3.0

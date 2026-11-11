@@ -1,0 +1,4 @@
+grade_code,term_code,fee_item,amount_cents,currency
+R,2027-T1,Tuition,850000,ZAR
+10,2027-T1,Tuition,1250000,ZAR
+10,2027-T1,Science lab levy,45000,ZAR

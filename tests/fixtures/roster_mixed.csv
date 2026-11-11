@@ -1,0 +1,5 @@
+student_number,first_name,last_name,date_of_birth,grade_code,class_code,guardian_email,guardian_phone
+STU-2026-00412,Thandiwe,Mokoena,2011-04-17,10,10B,n.mokoena@example.org,+27821234567
+STU-26-412,Sipho,Dlamini,2011-05-20,10,10B,s.dlamini@example.org,+27821230000
+STU-2026-00415,Naledi,Khumalo,2011-06-01,10,9B,khumalo@example.org,+27821239999
+STU-2026-00416,Johan,Botha,17/03/2011,10,10A,not-an-email,0821234567
