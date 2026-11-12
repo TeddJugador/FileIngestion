@@ -1,6 +1,6 @@
 # School ingestion service
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 
 A serverless bulk-file ingestion service for a multi-tenant school management system on
 AWS, written in Python with the AWS CDK. School staff upload class rosters, marks and fee
