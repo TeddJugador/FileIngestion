@@ -25,6 +25,7 @@ knowledge = [
     "httpx==0.28.1",
 ]
 dev = [
+    "reportlab==5.0.1",  # tests build PDFs; never in the Lambda layer
     "pytest>=8",
     "moto[s3,sqs,dynamodb,events]>=5.1",
     "ruff>=0.8",
@@ -63,5 +64,5 @@ mypy_path = "src"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["ijson", "ijson.*"]
+module = ["ijson", "ijson.*", "docx", "docx.*"]
 ignore_missing_imports = true

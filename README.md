@@ -1,6 +1,6 @@
 # School ingestion service
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 
 A serverless bulk-file ingestion service for a multi-tenant school management system on
 AWS, written in Python with the AWS CDK. School staff upload class rosters, marks and fee
@@ -440,7 +440,7 @@ documents, with citations (retrieval-augmented generation). It consumes the
 |---|---|---|
 | a | Cognito user pool, knowledge bucket, S3 Vectors index, registry tables, indexing queue, arm64 layer | done |
 | b | provider interfaces, fakes, Gemini / Voyage / Claude adapters | done |
-| c | text extraction and chunking | not started |
+| c | text extraction and chunking | done |
 | d | indexer end to end | not started |
 | e | query API | not started |
 | f | admin operations, alarms, metrics | not started |
@@ -460,6 +460,14 @@ Provider choices, checked against each provider's documentation on 2026-11-11:
 | Embeddings (alternative) | Voyage `voyage-4`, 1024 dimensions | `input_type` document/query; only 256/512/1024/2048 dimensions |
 | Generation | Claude `claude-haiku-5-5`, thinking `disabled`, effort `low` | no `temperature` on current Claude models; thinking counts toward the 600-token answer budget |
 | Generation (alternative) | Gemini `gemini-3.5-flash-lite`, thinking `minimal` | `maxOutputTokens` includes thinking tokens |
+
+Extraction keeps structure: PDF text per page (running headers and footers removed,
+hyphenated line breaks joined, scanned PDFs rejected as `NO_EXTRACTABLE_TEXT`), DOCX
+headings and tables (`cell | cell | cell`), Markdown `#` headings and plain-text
+paragraphs. Chunks follow headings and paragraphs and break only between sentences:
+about 500 tokens, never more than 800, with about 75 tokens of whole-sentence overlap.
+Each chunk is embedded as `<title> > <heading path>` plus its text, and chunks too small
+to stand alone are merged into a neighbour rather than dropped.
 
 API keys live in Secrets Manager, one secret per provider. Store them with
 `scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never
