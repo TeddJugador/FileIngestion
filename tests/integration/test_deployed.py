@@ -22,12 +22,12 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 
+from tests.integration.capture import EventCapture, capture_events
 from tests.unit.conftest import fixture_bytes
 
 pytestmark = pytest.mark.integration
 
 STACK = "SchoolIngestionStack"
-BUS = "SchoolEventBus"
 SCHOOL = "SCH-999"
 UPLOADER = "USR-integration-test"
 TIMEOUT_SECONDS = 180
@@ -36,10 +36,8 @@ TIMEOUT_SECONDS = 180
 @dataclass(frozen=True)
 class Deployed:
     bucket: str
-    region: str
     s3: Any
-    sqs: Any
-    queue_url: str
+    capture: EventCapture
 
 
 def _outputs(cloudformation: Any) -> dict[str, str]:
@@ -54,53 +52,8 @@ def deployed() -> Iterator[Deployed]:
         outputs = _outputs(session.client("cloudformation"))
     except ClientError as exc:
         pytest.fail(f"{STACK} is not deployed (or no access): {exc}")
-    events, sqs = session.client("events"), session.client("sqs")
-    suffix = uuid.uuid4().hex[:8]
-    name = f"ingestion-it-{suffix}"
-
-    queue_url = sqs.create_queue(QueueName=name)["QueueUrl"]
-    queue_arn = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["QueueArn"])[
-        "Attributes"
-    ]["QueueArn"]
-    rule_arn = events.put_rule(
-        Name=name,
-        EventBusName=BUS,
-        EventPattern=json.dumps(
-            {"source": ["school.ingestion"], "detail": {"metadata": {"schoolId": [SCHOOL]}}}
-        ),
-    )["RuleArn"]
-    sqs.set_queue_attributes(
-        QueueUrl=queue_url,
-        Attributes={
-            "Policy": json.dumps(
-                {
-                    "Version": "2012-10-17",
-                    "Statement": [
-                        {
-                            "Effect": "Allow",
-                            "Principal": {"Service": "events.amazonaws.com"},
-                            "Action": "sqs:SendMessage",
-                            "Resource": queue_arn,
-                            "Condition": {"ArnEquals": {"aws:SourceArn": rule_arn}},
-                        }
-                    ],
-                }
-            )
-        },
-    )
-    events.put_targets(Rule=name, EventBusName=BUS, Targets=[{"Id": "capture", "Arn": queue_arn}])
-    try:
-        yield Deployed(
-            bucket=outputs["BucketName"],
-            region=session.region_name or "",
-            s3=session.client("s3"),
-            sqs=sqs,
-            queue_url=queue_url,
-        )
-    finally:
-        events.remove_targets(Rule=name, EventBusName=BUS, Ids=["capture"])
-        events.delete_rule(Name=name, EventBusName=BUS)
-        sqs.delete_queue(QueueUrl=queue_url)
+    with capture_events(source="school.ingestion", school_id=SCHOOL) as capture:
+        yield Deployed(bucket=outputs["BucketName"], s3=session.client("s3"), capture=capture)
 
 
 def _upload(deployed: Deployed, dataset: str, name: str, body: bytes) -> tuple[str, str]:
@@ -126,16 +79,11 @@ def _wait_for_json(deployed: Deployed, key: str) -> Any:
 
 
 def _wait_for_event(deployed: Deployed, import_id: str) -> dict[str, Any]:
-    deadline = time.monotonic() + TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        response = deployed.sqs.receive_message(
-            QueueUrl=deployed.queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=10
-        )
-        for message in response.get("Messages", []):
-            event = json.loads(message["Body"])
-            if event["detail"]["data"].get("importId") == import_id:
-                return dict(event)
-    pytest.fail(f"no event for {import_id} after {TIMEOUT_SECONDS}s")
+    return deployed.capture.wait_for(
+        lambda e: e["detail"]["data"].get("importId") == import_id,
+        timeout=TIMEOUT_SECONDS,
+        what=import_id,
+    )
 
 
 def test_valid_marks_file_is_imported_and_announced(deployed: Deployed) -> None:

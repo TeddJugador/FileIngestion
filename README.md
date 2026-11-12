@@ -441,7 +441,7 @@ documents, with citations (retrieval-augmented generation). It consumes the
 | a | Cognito user pool, knowledge bucket, S3 Vectors index, registry tables, indexing queue, arm64 layer | done |
 | b | provider interfaces, fakes, Gemini / Voyage / Claude adapters | done |
 | c | text extraction and chunking | done |
-| d | indexer end to end | not started |
+| d | indexer end to end | done |
 | e | query API | not started |
 | f | admin operations, alarms, metrics | not started |
 | g | evaluation harness and README | not started |
@@ -468,6 +468,16 @@ paragraphs. Chunks follow headings and paragraphs and break only between sentenc
 about 500 tokens, never more than 800, with about 75 tokens of whole-sentence overlap.
 Each chunk is embedded as `<title> > <heading path>` plus its text, and chunks too small
 to stand alone are merged into a neighbour rather than dropped.
+
+The indexer consumes `DocumentAccepted`: it copies the staged source into the knowledge
+bucket (ingestion's copy expires after 45 days, and re-indexing needs the original),
+verifies its SHA-256, extracts, chunks, embeds and writes vectors to S3 Vectors, then
+swaps versions atomically in the registry and deletes the previous version's vectors.
+New vectors are written before old ones are deleted, so a document is never missing
+mid-update. When two uploads of one document finish out of order, the one ingestion
+accepted later wins. Failures that won't fix themselves (a scanned PDF, a hash mismatch)
+publish `DocumentIndexingFailed` at once; provider or vector-store errors are retried and
+reported only if the last attempt fails.
 
 API keys live in Secrets Manager, one secret per provider. Store them with
 `scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never

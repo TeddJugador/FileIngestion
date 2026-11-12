@@ -249,3 +249,12 @@ def test_sentence_splitting_never_loses_characters(seed: int) -> None:
     ]
     text = " ".join(rng.choice(pieces) for _ in range(40))
     assert re.sub(r"\s", "", "".join(split_sentences(text))) == re.sub(r"\s", "", text)
+
+
+def test_top_heading_repeating_the_title_is_not_doubled_in_the_context() -> None:
+    (chunk,) = chunk_document(
+        _doc((("Uniform Policy", "Shoes"), ["Black leather school shoes are required."])),
+        title="Uniform Policy",
+    )
+    assert chunk.context == "Uniform Policy > Shoes"
+    assert chunk.heading_path == ("Uniform Policy", "Shoes")  # citations keep the full path

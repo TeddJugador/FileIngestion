@@ -67,6 +67,9 @@ def build_stacks(
         ingestion_bucket=ingestion.storage.bucket,
         layer_asset_path=knowledge_layer_asset_path,
     )
+    # The knowledge stack reads the ingestion bucket by name (no cross-stack import),
+    # so the ordering is explicit.
+    knowledge.add_stack_dependency(ingestion)
     # cdk-nag v3 runs as a CDK policy-validation plugin: any unacknowledged finding
     # fails synthesis. Acknowledgements are also written to template metadata
     # (cdk_nag.rules_to_suppress) so they're auditable and testable.

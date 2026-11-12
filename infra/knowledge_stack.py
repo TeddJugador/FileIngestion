@@ -14,6 +14,7 @@ from constructs import Construct
 
 from infra.constructs.dependencies_layer import DependenciesLayer
 from infra.constructs.knowledge.document_bucket import KnowledgeDocumentBucket
+from infra.constructs.knowledge.indexer_function import IndexerFunction
 from infra.constructs.knowledge.indexing_queue import IndexingQueue
 from infra.constructs.knowledge.registry import KnowledgeTables
 from infra.constructs.knowledge.vector_store import VectorStore
@@ -39,7 +40,7 @@ class KnowledgeStack(Stack):
         self.event_bus = event_bus
         self.ops_alerts_topic = ops_alerts_topic
         self.user_pool = user_pool
-        # Read-only, and only processed/documents/*: granted per function in later phases.
+        # Read-only, and only processed/documents/* (granted to the indexer).
         self.ingestion_bucket = ingestion_bucket
 
         self.documents = KnowledgeDocumentBucket(self, "Documents")
@@ -57,6 +58,19 @@ class KnowledgeStack(Stack):
             asset_path=layer_asset_path,
             description="Knowledge deps (Powertools, pydantic, pypdf, python-docx, httpx)",
         ).layer
+
+        self.indexer = IndexerFunction(
+            self,
+            "Indexer",
+            config=config,
+            queue=self.indexing.queue,
+            knowledge_bucket=self.documents.bucket,
+            vectors=self.vectors,
+            registry=self.tables.registry,
+            idempotency=self.tables.idempotency,
+            event_bus=event_bus,
+            layer=self.dependencies_layer,
+        )
 
         CfnOutput(self, "KnowledgeBucketName", value=self.documents.bucket.bucket_name)
         CfnOutput(self, "VectorBucketName", value=self.vectors.bucket_name)

@@ -83,6 +83,13 @@ PERMISSIONS=$(cat <<JSON
       "Resource": "arn:${PARTITION}:events:${REGION}:${ACCOUNT}:rule/SchoolEventBus/ingestion-it-*"
     },
     {
+      "Sid": "IntegrationCanaryEvent",
+      "Effect": "Allow",
+      "Action": "events:PutEvents",
+      "Resource": "arn:${PARTITION}:events:${REGION}:${ACCOUNT}:event-bus/SchoolEventBus",
+      "Condition": {"StringEquals": {"events:source": "integration.test.canary"}}
+    },
+    {
       "Sid": "IntegrationTemporaryQueue",
       "Effect": "Allow",
       "Action": ["sqs:CreateQueue", "sqs:DeleteQueue", "sqs:GetQueueAttributes", "sqs:SetQueueAttributes", "sqs:ReceiveMessage"],

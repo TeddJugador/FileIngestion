@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from aws_lambda_powertools.utilities.parameters.exceptions import GetParameterError
 from botocore.exceptions import BotoCoreError, ClientError
 
 from knowledge.providers import EmbeddingDocument, GenerationRequest
@@ -49,7 +50,8 @@ def _settings(**overrides: str) -> ProviderSettings:
 def _require_secret(name: str) -> None:
     try:
         load_api_key(name)
-    except (ClientError, BotoCoreError, MissingApiKeyError) as exc:
+    # Powertools wraps Secrets Manager errors (e.g. ResourceNotFound) in GetParameterError.
+    except (GetParameterError, ClientError, BotoCoreError, MissingApiKeyError) as exc:
         pytest.skip(f"secret {name} not available: {type(exc).__name__}")
 
 

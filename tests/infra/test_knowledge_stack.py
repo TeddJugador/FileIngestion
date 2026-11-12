@@ -228,9 +228,3 @@ def test_knowledge_layer_is_arm64_on_the_shared_runtime(synthesized: Synthesized
     assert layer["Properties"]["CompatibleRuntimes"] == [f"python{PYTHON_VERSION}"]
     assert layer["Properties"]["CompatibleArchitectures"] == ["arm64"]
     assert "Knowledge deps" in layer["Properties"]["Description"]
-
-
-def test_no_grants_on_the_ingestion_bucket_yet(synthesized: Synthesized) -> None:
-    # Phase (a) creates no functions; later phases grant processed/documents/* only.
-    assert resources_of_type(synthesized.knowledge_json, "AWS::IAM::Policy") == {}
-    assert resources_of_type(synthesized.knowledge_json, "AWS::Lambda::Function") == {}

@@ -276,7 +276,10 @@ def _relabel(unit: _Unit, sep: str) -> _Unit:
 
 def _to_chunk(chunk_no: int, draft: _Draft, title: str) -> Chunk:
     pages = [u.page for u in draft.units if u.page is not None]
-    context = " > ".join([title, *draft.heading_path]) if title else " > ".join(draft.heading_path)
+    path = list(draft.heading_path)
+    if title and path and path[0].casefold() == title.casefold():
+        path = path[1:]  # a top heading that repeats the title (e.g. Markdown "# Title")
+    context = " > ".join([title, *path]) if title else " > ".join(path)
     return Chunk(
         chunk_no=chunk_no,
         text=_join(draft.units),
