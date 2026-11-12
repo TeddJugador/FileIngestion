@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -116,6 +117,35 @@ class Registry:
                     found[record.document_id] = record
                 request = dict(response.get("UnprocessedKeys") or {})
         return found
+
+    def active_documents(self, school_id: str | None = None) -> list[DocumentRecord]:
+        """ACTIVE documents of one school (index query) or of every school (scan)."""
+        items: list[dict[str, Any]] = []
+        kwargs: dict[str, Any]
+        operation: Callable[..., Any]
+        if school_id is not None:
+            kwargs = {
+                "TableName": self._table,
+                "IndexName": BY_SCHOOL_STATUS_INDEX,
+                "KeyConditionExpression": "school_id = :s AND begins_with(status_updated_at, :a)",
+                "ExpressionAttributeValues": {":s": {"S": school_id}, ":a": {"S": "ACTIVE#"}},
+            }
+            operation = self._client.query
+        else:
+            kwargs = {
+                "TableName": self._table,
+                "FilterExpression": "SK = :meta AND #s = :active",
+                "ExpressionAttributeNames": {"#s": "status"},
+                "ExpressionAttributeValues": {":meta": {"S": "META"}, ":active": {"S": "ACTIVE"}},
+            }
+            operation = self._client.scan
+        while True:
+            response = operation(**kwargs)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return [_document(_plain(i)) for i in items]
 
     def list_documents(self, school_id: str, *, limit: int = 100) -> list[DocumentRecord]:
         """A school's documents, newest change first (admin listing)."""

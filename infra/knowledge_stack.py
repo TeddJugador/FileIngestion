@@ -13,6 +13,8 @@ from aws_cdk import aws_sns as sns
 from constructs import Construct
 
 from infra.constructs.dependencies_layer import DependenciesLayer
+from infra.constructs.knowledge.admin_ops_function import AdminOpsFunction
+from infra.constructs.knowledge.alarms import KnowledgeAlarms
 from infra.constructs.knowledge.document_bucket import KnowledgeDocumentBucket
 from infra.constructs.knowledge.indexer_function import IndexerFunction
 from infra.constructs.knowledge.indexing_queue import IndexingQueue
@@ -87,6 +89,24 @@ class KnowledgeStack(Stack):
             event_bus=event_bus,
             layer=self.dependencies_layer,
         )
+        self.admin_ops = AdminOpsFunction(
+            self,
+            "AdminOps",
+            registry=self.tables.registry,
+            queue=self.indexing.queue,
+            dead_letter_queue=self.indexing.dead_letter_queue,
+            index_name=config.index_name,
+            layer=self.dependencies_layer,
+        )
+        self.alarms = KnowledgeAlarms(
+            self,
+            "Alarms",
+            config=config,
+            dead_letter_queue=self.indexing.dead_letter_queue,
+            query_function=self.query_api.function,
+            topic=ops_alerts_topic,
+        )
+        CfnOutput(self, "AdminOpsFunctionName", value=self.admin_ops.function.function_name)
         CfnOutput(self, "ApiUrl", value=self.query_api.url)
         CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
 

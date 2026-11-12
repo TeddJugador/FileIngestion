@@ -13,3 +13,10 @@ DLQ_RETENTION = Duration.days(14)
 # metadata per vector including filterable).
 FILTERABLE_METADATA_KEYS = ("school_id", "document_id", "version", "audience")
 NON_FILTERABLE_METADATA_KEYS = ("chunk_text", "title", "page_start", "page_end", "heading_path")
+
+# Powertools adds a "service" dimension to every custom metric, and an alarm only matches
+# a metric with exactly the same dimensions, so the functions and the alarms share these.
+METRICS_NAMESPACE = "SchoolSystem/Knowledge"
+INDEXER_SERVICE = "knowledge-indexer"
+API_SERVICE = "knowledge-api"
+ADMIN_SERVICE = "knowledge-admin"

@@ -148,3 +148,16 @@ def test_synth_passes_cdk_nag_with_a_real_account_and_region(
     app = cdk.App(context=cdk_context())
     build_stacks(app, layer_asset_path=fake_layer_dir, knowledge_layer_asset_path=fake_layer_dir)
     app.synth()  # raises on any unacknowledged finding
+
+
+def test_deployed_cdk_json_synthesizes(
+    fake_layer_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever providers cdk.json currently chooses must pass validation and cdk-nag."""
+    from tests.infra.conftest import deployed_context
+
+    monkeypatch.setenv("CDK_DEFAULT_ACCOUNT", "123456789012")
+    monkeypatch.setenv("CDK_DEFAULT_REGION", "us-east-1")
+    app = cdk.App(context=deployed_context())
+    build_stacks(app, layer_asset_path=fake_layer_dir, knowledge_layer_asset_path=fake_layer_dir)
+    app.synth()

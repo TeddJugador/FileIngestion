@@ -18,8 +18,10 @@ from infra.constructs.ingestion_bucket import bucket_arn_for_name, ingestion_buc
 from infra.constructs.knowledge.limits import (
     INDEXER_MAX_CONCURRENCY,
     INDEXER_MEMORY_MB,
+    INDEXER_SERVICE,
     INDEXER_TIMEOUT,
     INDEXING_MAX_RECEIVE_COUNT,
+    METRICS_NAMESPACE,
 )
 from infra.constructs.knowledge.vector_store import VectorStore
 from infra.constructs.worker_function import RUNTIME_REASON, lambda_code, log_permissions
@@ -158,8 +160,8 @@ class IndexerFunction(Construct):
                 "EMBEDDING_DIMENSION": str(config.embedding_dimension),
                 "MAX_DOCUMENT_BYTES": str(MAX_DOCUMENT_BYTES),
                 "MAX_RECEIVE_COUNT": str(INDEXING_MAX_RECEIVE_COUNT),
-                "POWERTOOLS_SERVICE_NAME": "knowledge-indexer",
-                "POWERTOOLS_METRICS_NAMESPACE": "SchoolSystem/Knowledge",
+                "POWERTOOLS_SERVICE_NAME": INDEXER_SERVICE,
+                "POWERTOOLS_METRICS_NAMESPACE": METRICS_NAMESPACE,
             },
         )
         # Low concurrency on purpose: keeps embedding calls inside provider rate limits.

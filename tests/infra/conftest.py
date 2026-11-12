@@ -22,10 +22,31 @@ from app import build_stacks
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def cdk_context(**overrides: Any) -> dict[str, Any]:
-    """The context ``cdk synth`` would use (cdk.json), plus overrides."""
+# The tests pin the service's settings, so they don't change when the deployer picks
+# other providers in cdk.json (test_deployed_cdk_json_synthesizes covers that file as-is).
+TEST_BASELINE: dict[str, Any] = {
+    "stage": "dev",
+    "embeddingProvider": "gemini",
+    "embeddingModel": "gemini-embedding-2",
+    "embeddingDimension": 768,
+    "vectorIndexVersion": 1,
+    "generationProvider": "CLAUDE",
+    "generationModel": "claude-haiku-5-5",
+    "generationThinking": "disabled",
+    "generationEffort": "low",
+    "corsAllowedOrigins": ["http://localhost:3000"],
+}
+
+
+def deployed_context() -> dict[str, Any]:
+    """Exactly what ``cdk synth`` uses: cdk.json's context."""
     context: dict[str, Any] = json.loads((PROJECT_ROOT / "cdk.json").read_text())["context"]
-    return {**context, **overrides}
+    return context
+
+
+def cdk_context(**overrides: Any) -> dict[str, Any]:
+    """cdk.json's feature flags with the pinned service settings, plus overrides."""
+    return {**deployed_context(), **TEST_BASELINE, **overrides}
 
 
 @dataclass(frozen=True)

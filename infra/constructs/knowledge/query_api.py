@@ -23,6 +23,7 @@ from infra.constructs.knowledge.indexer_function import (
     nag_resource_label,
     provider_secret_arn,
 )
+from infra.constructs.knowledge.limits import API_SERVICE, METRICS_NAMESPACE
 from infra.constructs.knowledge.registry import BY_SCHOOL_STATUS_INDEX
 from infra.constructs.knowledge.vector_store import VectorStore
 from infra.constructs.worker_function import RUNTIME_REASON, lambda_code, log_permissions
@@ -174,8 +175,8 @@ class QueryApi(Construct):
                 "GENERATION_THINKING": config.generation_thinking,
                 "GENERATION_EFFORT": config.generation_effort,
                 "SIMILARITY_THRESHOLD": "0.35",
-                "POWERTOOLS_SERVICE_NAME": "knowledge-api",
-                "POWERTOOLS_METRICS_NAMESPACE": "SchoolSystem/Knowledge",
+                "POWERTOOLS_SERVICE_NAME": API_SERVICE,
+                "POWERTOOLS_METRICS_NAMESPACE": METRICS_NAMESPACE,
             },
         )
         Validations.of(self.function.node.default_child).acknowledge(  # type: ignore[arg-type]

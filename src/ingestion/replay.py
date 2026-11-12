@@ -6,6 +6,7 @@ Invoked manually (console or CLI) through ``handlers/dlq_replay.py``.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from urllib.parse import unquote_plus
@@ -53,8 +54,19 @@ REQUEST_ADAPTER: TypeAdapter[InspectRequest | RedriveRequest | StatusRequest] = 
 
 
 class DlqOperations:
-    def __init__(self, sqs: SQSClient, *, dlq_url: str, dlq_arn: str, main_queue_arn: str) -> None:
+    def __init__(
+        self,
+        sqs: SQSClient,
+        *,
+        dlq_url: str,
+        dlq_arn: str,
+        main_queue_arn: str,
+        describe_body: BodyDescriber | None = None,
+    ) -> None:
+        """``describe_body`` summarises one message body for ``inspect``; the knowledge
+        service passes its own (its DLQ holds events and re-index requests)."""
         self._sqs = sqs
+        self._describe_body = describe_body or describe_s3_notification
         self._dlq_url = dlq_url
         self._dlq_arn = dlq_arn
         self._main_arn = main_queue_arn
@@ -91,7 +103,7 @@ class DlqOperations:
                 break
             for message in messages:
                 receipts.append(message["ReceiptHandle"])
-                seen.setdefault(message["MessageId"], _describe(message))
+                seen.setdefault(message["MessageId"], _describe(message, self._describe_body))
         self._release(receipts)
 
         depth = self._sqs.get_queue_attributes(
@@ -153,7 +165,30 @@ class DlqOperations:
             )
 
 
-def _describe(message: MessageTypeDef) -> dict[str, Any]:
+BodyDescriber = Callable[[str], dict[str, Any]]
+
+
+def describe_s3_notification(body: str) -> dict[str, Any]:
+    """Ingestion's DLQ holds S3 event notifications: name the objects they refer to."""
+    objects: list[dict[str, Any]] = []
+    try:
+        records = json.loads(body).get("Records", [])
+    except (ValueError, AttributeError):
+        return {"objects": objects, "unparseableBody": True}
+    for record in records:
+        obj = record["s3"]["object"]
+        objects.append(
+            {
+                "bucket": record["s3"]["bucket"]["name"],
+                "key": unquote_plus(obj["key"]),
+                "versionId": obj.get("versionId"),
+                "eTag": obj.get("eTag"),
+            }
+        )
+    return {"objects": objects}
+
+
+def _describe(message: MessageTypeDef, describe_body: BodyDescriber) -> dict[str, Any]:
     attributes = message.get("Attributes", {})
     described: dict[str, Any] = {
         "messageId": message["MessageId"],
@@ -161,20 +196,9 @@ def _describe(message: MessageTypeDef) -> dict[str, Any]:
         # First receive from the main queue = the first (failed) processing attempt.
         "firstFailureAt": _timestamp(attributes.get("ApproximateFirstReceiveTimestamp")),
         "sentAt": _timestamp(attributes.get("SentTimestamp")),
-        "objects": [],
     }
     try:
-        body = json.loads(message["Body"])
-        for record in body.get("Records", []):
-            obj = record["s3"]["object"]
-            described["objects"].append(
-                {
-                    "bucket": record["s3"]["bucket"]["name"],
-                    "key": unquote_plus(obj["key"]),
-                    "versionId": obj.get("versionId"),
-                    "eTag": obj.get("eTag"),
-                }
-            )
+        described.update(describe_body(message["Body"]))
     except (ValueError, KeyError, TypeError, AttributeError):
         described["unparseableBody"] = True
     return described

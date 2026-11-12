@@ -8,4 +8,3 @@ __pycache__/
 .ruff_cache/
 cdk.context.json
 *.egg-info/
-docs/

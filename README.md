@@ -1,6 +1,6 @@
 # School ingestion service
 
-[![CI](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 
 A serverless bulk-file ingestion service for a multi-tenant school management system on
 AWS, written in Python with the AWS CDK. School staff upload class rosters, marks and fee
@@ -443,7 +443,7 @@ documents, with citations (retrieval-augmented generation). It consumes the
 | c | text extraction and chunking | done |
 | d | indexer end to end | done |
 | e | query API | done |
-| f | admin operations, alarms, metrics | not started |
+| f | admin operations, alarms, metrics | done |
 | g | evaluation harness and README | not started |
 
 Models and the vector index are configured in `cdk.json` (`embeddingProvider`,
@@ -509,6 +509,41 @@ TOKEN=$(aws cognito-idp initiate-auth --client-id "$CLIENT" --auth-flow USER_PAS
 curl -s -X POST "$API/ask" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"question": "What happens if my child is late three times?"}'
 ```
+
+### Knowledge runbooks
+
+**Changing the embedding model (or its dimension).** Vectors from different models can't
+be compared, so a model change means a new index and re-indexing everything.
+
+1. In `cdk.json`, change `embeddingModel` (and `embeddingProvider` / `embeddingDimension`
+   if needed) **and** increase `vectorIndexVersion`. The index name follows, for example
+   `docs-gemini-768-v1` to `docs-gemini-1536-v2`.
+2. If the provider changed, store its key: `scripts/set_provider_key.sh voyage`.
+3. `cdk deploy --all`. CloudFormation creates the new, empty index and deletes the old
+   one. **From here until step 4 finishes, questions get the "contact the school office"
+   reply**: plan the change for a quiet time.
+4. Preview, then queue the re-index (about 2 documents a second):
+   `scripts/knowledge_ops.sh reindex --dry-run`, then `scripts/knowledge_ops.sh reindex`.
+   It reads this service's own copy of each source, so documents re-index however old
+   their upload is.
+5. Run `scripts/knowledge_ops.sh reindex --dry-run` again: `queued` should be 0.
+
+Changing only the *generation* model (`generationProvider` / `generationModel`) needs
+none of this: deploy and it takes effect.
+
+**A document failed indexing** (`knowledge-indexing-dlq-not-empty`):
+`scripts/knowledge_ops.sh dlq inspect` names the document and version of each message.
+Fix the cause (usually a provider outage or an expired key), then
+`scripts/knowledge_ops.sh dlq redrive` and `scripts/knowledge_ops.sh dlq status`.
+Permanent problems (a scanned PDF, a corrupt file) never reach the DLQ: they are reported
+straight away as `DocumentIndexingFailed`, and the fix is to upload a better file.
+
+**The other alarms.** `knowledge-provider-errors`: more than 5 provider calls failed
+after retries in 5 minutes; check the provider's status page and that the keys in
+Secrets Manager are valid. `knowledge-query-latency-p95`: answers are slow; usually the
+model provider. `knowledge-embedding-model-mismatch`: the configured embedding model
+didn't build the documents in the index, so the API refuses to answer rather than
+compare incompatible vectors; finish the re-index, or restore the previous `cdk.json`.
 
 API keys live in Secrets Manager, one secret per provider. Store them with
 `scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never
