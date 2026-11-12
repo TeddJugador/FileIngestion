@@ -305,3 +305,16 @@ def test_retire_unknown_or_already_retired(indexed: KnowledgeHarness) -> None:
     service.retire(ADMIN, "doc-aaaaaaaaaaa3")
     with pytest.raises(DocumentNotFoundError):
         service.retire(ADMIN, "doc-aaaaaaaaaaa3")
+
+
+def test_retrieve_returns_what_ask_would_send(indexed: KnowledgeHarness) -> None:
+    generator = FakeGenerator()
+    service = query_service(indexed, generator=generator)
+    retrieved = service.retrieve(PARENT, QUESTION)
+    service.ask(PARENT, QUESTION)
+    prompt = generator.requests[0].user
+    assert retrieved
+    assert prompt.count('<source id="') == len(retrieved)
+    for hit in retrieved:
+        assert hit.metadata["chunk_text"].split(".")[0] in prompt
+    assert all("PARENT" in hit.metadata["audience"] for hit in retrieved)

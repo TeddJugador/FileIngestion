@@ -1,0 +1,33 @@
+# The evaluation corpus: fictional documents for a fictional school.
+# Sources are Markdown in source/; build_corpus.py writes the files listed here.
+school_id: SCH-900          # an evaluation-only school: never mixed with real data
+upload_prefix: eval         # uploaded to raw/documents/SCH-900/eval/<file>
+documents:
+  - key: code-of-conduct
+    file: code-of-conduct.pdf
+    title: Code of Conduct
+    audience: [STAFF, PARENT]
+  - key: fee-policy
+    file: fee-policy.docx
+    title: Fee Policy 2027
+    audience: [STAFF, PARENT]
+  - key: uniform-policy
+    file: uniform-policy.md
+    title: Uniform Policy
+    audience: [STAFF, PARENT]
+  - key: assessment-policy
+    file: assessment-policy.docx
+    title: Assessment Policy
+    audience: [STAFF, PARENT]
+  - key: transport-rules
+    file: transport-rules.pdf
+    title: Transport Rules
+    audience: [PARENT]
+  - key: staff-handbook
+    file: staff-handbook.md
+    title: Staff Handbook
+    audience: [STAFF]
+  - key: term1-newsletter          # contains a planted prompt-injection attempt
+    file: term1-newsletter.md
+    title: Term 1 Newsletter
+    audience: [PARENT]

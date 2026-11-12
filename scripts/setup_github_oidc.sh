@@ -10,6 +10,12 @@
 #       * assume the CDK bootstrap roles (cdk deploy does the rest through them)
 #       * run the integration tests (SCH-999 uploads, a temporary rule and queue)
 # Prints the role ARN to save as the GitHub variable AWS_DEPLOY_ROLE_ARN.
+#
+# Repositories created (or renamed/transferred) after 2026-07-15 send an OIDC "sub" with
+# immutable numeric IDs: repo:OWNER@OWNER-ID/REPO@REPO-ID:environment:dev. The trust
+# policy accepts that form and the older name-only one. The IDs come from GitHub's public
+# API; for a private repository, set GITHUB_OWNER_ID and GITHUB_REPO_ID yourself
+# (shown in the repository's Settings > Actions > OIDC page).
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then sed -n '2,13p' "$0"; exit 2; fi
@@ -21,6 +27,30 @@ PARTITION="aws"
 PROVIDER_HOST="token.actions.githubusercontent.com"
 PROVIDER_ARN="arn:${PARTITION}:iam::${ACCOUNT}:oidc-provider/${PROVIDER_HOST}"
 BUCKET="school-ingestion-${ACCOUNT}-${REGION}"
+
+github_ids() {
+  python3 - "$OWNER" "$REPO" <<'PY'
+import json, sys, urllib.request
+owner, repo = sys.argv[1], sys.argv[2]
+request = urllib.request.Request(
+    f"https://api.github.com/repos/{owner}/{repo}",
+    headers={"User-Agent": "school-oidc-setup", "Accept": "application/vnd.github+json"},
+)
+with urllib.request.urlopen(request, timeout=20) as r:
+    data = json.load(r)
+print(data["owner"]["id"], data["id"])
+PY
+}
+if [[ -z "${GITHUB_OWNER_ID:-}" || -z "${GITHUB_REPO_ID:-}" ]]; then
+  if ! read -r GITHUB_OWNER_ID GITHUB_REPO_ID < <(github_ids); then
+    echo "Couldn't read ${OWNER}/${REPO} from api.github.com (private?)." >&2
+    echo "Set GITHUB_OWNER_ID and GITHUB_REPO_ID (Settings > Actions > OIDC) and rerun." >&2
+    exit 1
+  fi
+fi
+SUB_IMMUTABLE="repo:${OWNER}@${GITHUB_OWNER_ID}/${REPO}@${GITHUB_REPO_ID}:environment:dev"
+SUB_LEGACY="repo:${OWNER}/${REPO}:environment:dev"
+echo "Trusting OIDC subjects: ${SUB_IMMUTABLE} and ${SUB_LEGACY}"
 
 if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$PROVIDER_ARN" >/dev/null 2>&1; then
   echo "OIDC provider already exists"
@@ -40,7 +70,7 @@ TRUST=$(cat <<JSON
     "Condition": {
       "StringEquals": {
         "${PROVIDER_HOST}:aud": "sts.amazonaws.com",
-        "${PROVIDER_HOST}:sub": "repo:${OWNER}/${REPO}:environment:dev"
+        "${PROVIDER_HOST}:sub": ["${SUB_IMMUTABLE}", "${SUB_LEGACY}"]
       }
     }
   }]

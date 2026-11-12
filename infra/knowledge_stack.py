@@ -113,6 +113,7 @@ class KnowledgeStack(Stack):
         CfnOutput(self, "KnowledgeBucketName", value=self.documents.bucket.bucket_name)
         CfnOutput(self, "VectorBucketName", value=self.vectors.bucket_name)
         CfnOutput(self, "VectorIndexName", value=config.index_name)
+        CfnOutput(self, "RegistryTableName", value=self.tables.registry.table_name)
         CfnOutput(
             self, "IndexingDeadLetterQueueUrl", value=self.indexing.dead_letter_queue.queue_url
         )

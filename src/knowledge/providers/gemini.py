@@ -151,7 +151,9 @@ class GeminiGenerator:
             provider=self.provider,
             model_id=self.model_id,
             input_tokens=int(usage.get("promptTokenCount", 0)),
-            output_tokens=int(usage.get("candidatesTokenCount", 0)),
+            # Billed output, as Claude reports it: Gemini bills thinking tokens as output.
+            output_tokens=int(usage.get("candidatesTokenCount", 0))
+            + int(usage.get("thoughtsTokenCount", 0)),
             truncated=finish == "MAX_TOKENS",
             stop_reason=finish,
             extra={"thinking_tokens": int(usage.get("thoughtsTokenCount", 0))},

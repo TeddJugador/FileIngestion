@@ -1,9 +1,13 @@
-# School ingestion service
+# School ingestion and knowledge services
 
-[![CI](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml/badge.svg)](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml)
 
-A serverless bulk-file ingestion service for a multi-tenant school management system on
-AWS, written in Python with the AWS CDK. School staff upload class rosters, marks and fee
+Two serverless services for a multi-tenant school management system on AWS, written in
+Python with the AWS CDK: an **ingestion service** that validates and stages uploaded
+files, and a **[knowledge service](#knowledge-service)** that answers staff and parents'
+questions from the school's documents, with citations.
+
+The ingestion service is a bulk-file pipeline. School staff upload class rosters, marks and fee
 schedules (CSV, JSON or JSONL) and policy documents (PDF, Word, Markdown, text). The
 service validates every row, stages the valid records, writes an audit report, and
 announces the result on a shared EventBridge bus so that other services (student records,
@@ -63,9 +67,11 @@ which pages ops.
 ## Repository layout
 
 ```
-app.py                      CDK entry point (SharedStack + IngestionStack, cdk-nag)
+app.py                      CDK entry point (Shared, Ingestion and Knowledge stacks, cdk-nag)
 infra/
-  shared_stack.py           event bus + 30-day archive, ops-alerts topic (KMS)
+  shared_stack.py           event bus + 30-day archive, ops-alerts topic (KMS), Cognito
+  knowledge_stack.py        the knowledge service (constructs/knowledge/)
+  knowledge_config.py       model and index settings from cdk.json, validated
   ingestion_stack.py        everything below, wired together
   constructs/
     ingestion_bucket.py     bucket, lifecycle rules, native S3 -> SQS notifications
@@ -85,13 +91,22 @@ src/ingestion/
   documents.py              content checks, document ID and version
   events.py, reporting.py   event envelope + publisher, summary + error report
   replay.py                 DLQ inspect / redrive / status
+src/knowledge/
+  handlers/                 indexer.py, api.py, admin_ops.py (thin: wiring only)
+  extraction/, chunking.py  structure-aware text extraction and chunking
+  providers/                Embedder / Generator interfaces; Gemini, Voyage, Claude, fakes
+  indexer.py, registry.py   indexing steps and the version registry
+  query.py, prompting.py    retrieval, prompts, citations; identity.py (from the JWT)
+  vector_store.py           S3 Vectors and in-memory stores, the audience filter
+eval/                       fictional corpus, 34 questions, run_eval.py, results/
 tests/
   unit/                     moto-backed tests of the code (incl. the handlers)
   infra/                    CDK assertion tests of the synthesized templates
   integration/              opt-in tests against a deployed account
   fixtures/                 sample valid, invalid and malformed files
-scripts/                    build_layer.sh, upload_sample.sh, dlq.sh, setup_github_oidc.sh
-docs/                       the build specification and the event catalogue
+scripts/                    build_layer.sh, upload_sample.sh, dlq.sh, setup_github_oidc.sh,
+                            set_provider_key.sh, create_test_user.sh, knowledge_ops.sh
+docs/                       the build specifications and the event catalogue
 ```
 
 ## Quick start (local)
@@ -270,14 +285,19 @@ aws sqs send-message --queue-url "$DLQ" --message-body "{\"Records\":[{\"eventTi
 
 | Suite | Command | What it covers |
 |---|---|---|
-| Unit | `pytest tests/unit` | parsing, schemas, the pipeline and both handlers end to end against moto (S3, DynamoDB, EventBridge, SQS) |
+| Unit | `pytest tests/unit` | parsing, schemas, the pipeline and both handlers end to end against moto (S3, DynamoDB, EventBridge, SQS); for the knowledge service, extraction, chunking, the provider adapters against recorded HTTP, the indexer, the query service and API handler, and the evaluation corpus and scoring |
 | Infrastructure | `pytest tests/infra` | the synthesized CloudFormation: queue settings, notifications, lifecycle, IAM, alarms, cdk-nag acknowledgements |
 | Slow | part of plain `pytest` | multipart uploads over 5 MiB, and a file just under 20 MB processed with peak memory measured by `tracemalloc` |
-| Integration | `pytest -m integration` | uploads to the deployed stacks, waits for `summary.json` and captures the real event through a temporary rule; also proves the arm64 layer imports on Lambda |
+| Integration | `pytest -m integration` | uploads to the deployed stacks, waits for `summary.json` and captures the real event through a temporary rule; also proves the arm64 layer imports on Lambda. For the knowledge service: indexing into real S3 Vectors, live provider calls, and the API end to end with temporary Cognito users, including the staff-only leak check |
 
 Tests that guard important properties were checked by mutation: breaking the property on
 purpose (logging a row value, publishing before the summary exists, keying idempotency on
-the ETag, dropping a queue-policy condition) makes at least one test fail.
+the ETag, dropping a queue-policy condition, removing the audience filter, keeping
+invented citations, letting an older upload replace a newer one) makes at least one test
+fail.
+
+The infrastructure tests pin the model settings to a fixed baseline, so they don't change
+with the providers chosen in `cdk.json`; one more test synthesizes the real `cdk.json`.
 
 ## CI/CD
 
@@ -296,7 +316,13 @@ scripts/setup_github_oidc.sh <github-owner> <repo-name>
 The script creates the GitHub OIDC identity provider (if the account doesn't have one)
 and a role, `school-ingestion-github-deploy`, that only jobs in the `dev` environment of
 that repository can assume. The role can assume the CDK bootstrap roles (which do the
-actual deployment) and run the integration tests, nothing more. Then, in the repository's
+actual deployment) and run the ingestion integration tests, nothing more; the knowledge
+integration tests need Cognito and provider keys, so they skip in CI and run locally.
+
+Repositories created (or renamed) after 15 July 2026 present a different OIDC subject,
+with numeric owner and repository IDs (`repo:OWNER@ID/REPO@ID:environment:dev`). The
+script reads the IDs from GitHub's API and trusts both forms; for a private repository,
+set `GITHUB_OWNER_ID` and `GITHUB_REPO_ID` first (shown under Settings → Actions → OIDC). Then, in the repository's
 **Settings → Environments**, create an environment named `dev` with the variables the
 script prints: `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION` and, optionally, `ALERT_EMAIL`. The
 deploy job is skipped until `AWS_DEPLOY_ROLE_ARN` is set.
@@ -429,88 +455,266 @@ reported partial failure would not). And the cross-stack references between the 
 stacks are pinned to CDK's "strong" mode, which stops the shared stack from being deleted
 while the ingestion stack still uses it.
 
-## Knowledge service (in progress)
+## Knowledge service
 
-A second service in this CDK app answers staff and parents' questions from school
-documents, with citations (retrieval-augmented generation). It consumes the
-`DocumentAccepted` events published above. Specification:
+A second service in this CDK app answers staff and parents' questions from the school's
+own documents, with citations (retrieval-augmented generation). It consumes the
+`DocumentAccepted` events published above, keeps its own copy of each document, and
+answers over an authenticated HTTP API. Specification:
 [`docs/KNOWLEDGE_SERVICE_BUILD_PROMPT.md`](docs/KNOWLEDGE_SERVICE_BUILD_PROMPT.md).
 
-| Phase | Scope | State |
-|---|---|---|
-| a | Cognito user pool, knowledge bucket, S3 Vectors index, registry tables, indexing queue, arm64 layer | done |
-| b | provider interfaces, fakes, Gemini / Voyage / Claude adapters | done |
-| c | text extraction and chunking | done |
-| d | indexer end to end | done |
-| e | query API | done |
-| f | admin operations, alarms, metrics | done |
-| g | evaluation harness and README | not started |
+The rules that matter most: a parent can never retrieve staff-only content (the audience
+filter is part of the vector query), the model is never called without sources, every
+answer cites the passages it used, and question and answer text is never logged, stored
+or put in an event.
 
-Models and the vector index are configured in `cdk.json` (`embeddingProvider`,
-`embeddingModel`, `embeddingDimension`, `vectorIndexVersion`, `generationProvider`,
-`generationModel`, `generationThinking`, `generationEffort`). The index name is derived from them, for example
-`docs-gemini-768-v1`, because an index only makes sense for the model that produced its
-vectors. `scripts/build_layer.sh` now builds both dependency layers.
+### Architecture
 
-Provider choices, checked against each provider's documentation on 2026-11-11:
+```mermaid
+flowchart LR
+    subgraph ingestion [Ingestion service]
+        UP[Staff upload] --> IB[(Ingestion bucket)]
+        IB --> ETL[ETL worker]
+    end
+    ETL -- DocumentAccepted --> BUS{{SchoolEventBus}}
 
-| Role | Default | Notes |
-|---|---|---|
-| Embeddings | Gemini `gemini-embedding-2`, 768 dimensions | no `task_type`: retrieval hints go in the text (`title: … \| text: …` for documents, `task: question answering \| query: …` for questions); batches via `batchEmbedContents` (max 100) |
-| Embeddings (alternative) | Voyage `voyage-4`, 1024 dimensions | `input_type` document/query; only 256/512/1024/2048 dimensions |
-| Generation | Claude `claude-haiku-5-5`, thinking `disabled`, effort `low` | no `temperature` on current Claude models; thinking counts toward the 600-token answer budget |
-| Generation (alternative) | Gemini `gemini-3.5-flash-lite`, thinking `minimal` | `maxOutputTokens` includes thinking tokens |
+    subgraph indexing [Indexing path]
+        BUS -- rule --> IQ[[document-indexing-queue]]
+        ADM[admin_ops] -- REINDEX --> IQ
+        IQ --> IDX[Indexer Lambda]
+        IQ -. after 3 attempts .-> DLQ[[indexing DLQ]]
+        IDX -- copy source, key lists --> KB[(Knowledge bucket)]
+        IDX -- chunks --> EMB[Embedding provider<br/>Gemini or Voyage]
+        IDX -- PutVectors --> VX[(S3 Vectors index)]
+        IDX -- version swap --> REG[(DocumentRegistry)]
+        IDX -- DocumentIndexed --> BUS
+    end
 
-Extraction keeps structure: PDF text per page (running headers and footers removed,
-hyphenated line breaks joined, scanned PDFs rejected as `NO_EXTRACTABLE_TEXT`), DOCX
-headings and tables (`cell | cell | cell`), Markdown `#` headings and plain-text
-paragraphs. Chunks follow headings and paragraphs and break only between sentences:
-about 500 tokens, never more than 800, with about 75 tokens of whole-sentence overlap.
-Each chunk is embedded as `<title> > <heading path>` plus its text, and chunks too small
-to stand alone are merged into a neighbour rather than dropped.
+    subgraph query [Query path]
+        APP[Staff or parent app] -- Cognito ID token --> API[HTTP API<br/>JWT authorizer]
+        API --> QL[Query Lambda]
+        QL -- question --> EMB
+        QL -- QueryVectors, school + audience filter --> VX
+        QL -- active versions --> REG
+        QL -- numbered sources --> GEN[Generation provider<br/>Gemini or Claude]
+        QL -- QuestionAnswered, no text --> BUS
+    end
+```
 
-The indexer consumes `DocumentAccepted`: it copies the staged source into the knowledge
-bucket (ingestion's copy expires after 45 days, and re-indexing needs the original),
-verifies its SHA-256, extracts, chunks, embeds and writes vectors to S3 Vectors, then
-swaps versions atomically in the registry and deletes the previous version's vectors.
-New vectors are written before old ones are deleted, so a document is never missing
-mid-update. When two uploads of one document finish out of order, the one ingestion
-accepted later wins. Failures that won't fix themselves (a scanned PDF, a hash mismatch)
-publish `DocumentIndexingFailed` at once; provider or vector-store errors are retried and
-reported only if the last attempt fails.
+Indexing: the indexer copies the staged document into the knowledge bucket, checks its
+SHA-256, extracts text with its structure (PDF pages, Word headings and tables, Markdown
+headings), splits it into chunks of about 500 tokens along headings and sentences, embeds
+them and writes the vectors. The registry then makes the new version active in one
+transaction, and only after that are the previous version's vectors deleted.
 
-The query API (`POST /ask`, `POST /feedback`, admin-only `GET /documents` and
-`POST /documents/{documentId}/retire`) sits behind an HTTP API with a Cognito JWT
-authorizer. Send the **ID token** (only it carries `custom:school_id`). The caller's
-school and role come from the token, never the request. The audience filter is part of
-the vector query itself, so a parent's question only ever searches chunks of documents
-whose audience includes `PARENT`; if nothing relevant is found, no model is called.
+Querying: the caller's school and role come from the verified token. The question is
+embedded and searched with a filter on school and audience, then results from inactive
+versions or below a similarity of 0.35 are dropped. With no sources left, the answer is a
+fixed "please contact the school office"; otherwise the model answers from numbered,
+delimited sources, and any citation it invents is removed.
+
+### Compared with Bedrock Knowledge Bases
+
+Amazon Bedrock Knowledge Bases offers much of this as a managed service: it syncs
+documents from S3, parses and chunks them, embeds them with a Bedrock model, stores the
+vectors (S3 Vectors is one of its stores), filters by metadata at query time, and answers
+with citations. For many teams that is the better starting point.
+
+This service builds the pipeline itself for four reasons: the account it was developed in
+has no Bedrock model access; it needs providers outside Bedrock (Gemini embeddings and
+generation); it ties indexing to the platform's events (ingestion's `DocumentAccepted`
+in, `DocumentIndexed` out) with write-then-delete version swaps the registry controls;
+and it makes the security-relevant steps explicit and tested (the audience filter, the
+no-sources rule, injection-resistant prompts). The cost is more code to own.
+
+Adding Bedrock as a provider would need a `BedrockEmbedder` (InvokeModel with a Bedrock
+embedding model, mapping document and query inputs to that model's input-type setting)
+and a `BedrockGenerator` (the Converse API, reading token usage from its response), both
+implementing the existing `Embedder` and `Generator` interfaces. Bedrock authenticates
+with the Lambda's IAM role, so those adapters would skip the API-key loader and instead
+need `bedrock:InvokeModel` on the chosen model ARNs; throttling errors would map to the
+existing retryable error. Using the Knowledge Bases `Retrieve` API instead of S3 Vectors
+directly would replace the retrieval step too, at the price of the registry-controlled
+version swaps.
+
+### Setup
+
+**1. Provider API keys.** Create a Gemini key in [Google AI Studio](https://aistudio.google.com/apikey)
+(and, to use Claude or Voyage, keys from their consoles). Store each in Secrets Manager;
+the script reads the key from a hidden prompt, so it never reaches your shell history:
 
 ```bash
-POOL=$(aws cloudformation describe-stacks --stack-name SchoolSharedStack \
-  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
-CLIENT=$(aws cloudformation describe-stacks --stack-name SchoolSharedStack \
-  --query "Stacks[0].Outputs[?OutputKey=='TestClientId'].OutputValue" --output text)
+scripts/set_provider_key.sh gemini       # also: anthropic, voyage
+```
+
+Google's free tier may use submitted content to improve its products: enable billing
+before real parents type questions.
+
+**2. Choose the models** in `cdk.json`:
+
+| Setting | Default | Alternatives |
+|---|---|---|
+| `embeddingProvider` / `embeddingModel` | `gemini` / `gemini-embedding-2` | `voyage` / `voyage-4` |
+| `embeddingDimension` | `768` | Gemini 128–3072; Voyage 256, 512, 1024 or 2048 |
+| `generationProvider` / `generationModel` | `GEMINI` / `gemini-3.5-flash-lite` | `CLAUDE` / `claude-haiku-5-5` |
+| `generationThinking` | `minimal` | Gemini: `low`, `medium`, `high`; Claude: `disabled` |
+
+The vector index name is derived from the embedding settings (for example
+`docs-gemini-768-v1`), because an index only makes sense for the model that produced
+its vectors. Changing the generation model needs only a deploy.
+
+**3. Build and deploy**, as for ingestion:
+
+```bash
+./scripts/build_layer.sh
+cdk deploy --all -c alertEmail=you@example.com
+```
+
+**4. Test users.** In the dev stage, `scripts/create_test_user.sh` creates a confirmed
+user in a group and prints an ID token:
+
+```bash
+scripts/create_test_user.sh parent@example.com parent SCH-001
+scripts/create_test_user.sh teacher@example.com staff SCH-001
+scripts/create_test_user.sh office@example.com admin SCH-001
+```
+
+### Example requests
+
+Send the **ID token** (only it carries `custom:school_id`):
+
+```bash
 API=$(aws cloudformation describe-stacks --stack-name SchoolKnowledgeStack \
   --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+TOKEN=$(scripts/create_test_user.sh parent@example.com parent SCH-001)
 
-# A test parent (dev only; the password must meet the pool's policy)
-aws cognito-idp admin-create-user --user-pool-id "$POOL" --username parent@example.com \
-  --message-action SUPPRESS --user-attributes Name=email,Value=parent@example.com \
-  Name=email_verified,Value=true Name=custom:school_id,Value=SCH-001
-aws cognito-idp admin-set-user-password --user-pool-id "$POOL" --username parent@example.com \
-  --password 'Choose-A-Str0ng-Pass!' --permanent
-aws cognito-idp admin-add-user-to-group --user-pool-id "$POOL" --username parent@example.com \
-  --group-name parent
-
-TOKEN=$(aws cognito-idp initiate-auth --client-id "$CLIENT" --auth-flow USER_PASSWORD_AUTH \
-  --auth-parameters USERNAME=parent@example.com,PASSWORD='Choose-A-Str0ng-Pass!' \
-  --query AuthenticationResult.IdToken --output text)
-curl -s -X POST "$API/ask" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -s -X POST "$API/ask" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"question": "What happens if my child is late three times?"}'
 ```
 
-### Knowledge runbooks
+```json
+{
+  "queryId": "qry-01JD4Q9T5X0V7Y3M8K2N6P1R4S",
+  "outcome": "ANSWERED",
+  "answer": "Three late arrivals in one term lead to a Friday detention from 13:30 to 14:30, and the class teacher writes to you [S1].",
+  "grounded": true,
+  "citations": [
+    {"sourceId": "S1", "documentId": "doc-4be1a07c93d2", "title": "Code of Conduct",
+     "pageStart": 1, "pageEnd": 2, "headingPath": ""}
+  ]
+}
+```
+
+Feedback on your own answer, and the admin routes (an `admin` token):
+
+```bash
+curl -s -X POST "$API/feedback" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"queryId": "qry-01JD4Q9T5X0V7Y3M8K2N6P1R4S", "helpful": true}'
+
+curl -s "$API/documents" -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -s -X POST "$API/documents/doc-4be1a07c93d2/retire" -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+A missing or invalid token gets `401` from API Gateway; a parent or staff member on an
+admin route gets `403`; feedback on someone else's question gets `404`.
+
+### Evaluation
+
+`eval/` measures retrieval and answers against a deployed dev stage:
+
+- `eval/corpus/`: seven fictional documents for an invented school (code of conduct, fee
+  policy, uniform, assessment, transport, a **staff-only** handbook, and a newsletter
+  carrying a planted "ignore all previous instructions" attack), as PDF, Word and
+  Markdown. The Markdown in `corpus/source/` is the single source; `build_corpus.py`
+  generates the PDF and Word files.
+- `eval/questions.yaml`: 34 questions with the expected documents, section and key facts:
+  single-section and two-document questions, questions the corpus can't answer, staff-only
+  questions asked by a parent, staff questions asked by staff, and questions aimed at the
+  injected instruction.
+- `eval/run_eval.py`: uploads the corpus through ingestion (school `SCH-900`), waits until
+  every version is active, then for each question records the ranked retrieval (the same
+  `retrieve()` the API uses) and asks the real API as that role. It reports hit rate @ k,
+  mean reciprocal rank, correct refusals, audience leaks (must be 0), injection resistance,
+  latency and cost per question, and writes `eval/results/<config>.md` and `.json`.
+
+Unit tests check the question set against the extracted corpus (every key fact and
+section really exists where expected), the scoring arithmetic, and, offline through the
+real indexer and retrieval, that no parent question ever retrieves staff-only content.
+
+```bash
+python eval/run_eval.py --label "Gemini embeddings + Gemini 3.5 Flash-Lite" --update-readme
+# change generationProvider/Model in cdk.json, cdk deploy, then:
+python eval/run_eval.py --label "Gemini embeddings + Claude Haiku 5.5" --skip-upload --update-readme
+python eval/run_eval.py --cleanup-only     # retire the evaluation documents
+```
+
+<!-- eval-results:start -->
+| Configuration | Hit @1 | Hit @6 | MRR | Key facts | Correct refusals | Leaks | Injection | Latency (ms) | Cost / question |
+|---|---|---|---|---|---|---|---|---|---|
+| Gemini embeddings + Gemini 3.5 Flash-Lite | 0.962 | 1.0 | 0.981 | 0.962 | 0.0 | 0 | 1.0 | 8137 | $0.00035 |
+| Gemini embeddings + Gemini 3.5 Flash | 0.962 | 1.0 | 0.981 | 0.962 | 0.0 | 0 | 1.0 | 4638 | $0.00035 |
+<!-- eval-results:end -->
+
+Costs are at list prices (see `eval/pricing.yaml`); on Google's free tier the actual
+cost is zero. Between runs only the generation model changes, so retrieval metrics should
+match and the differences show in key facts, refusals, latency and cost.
+
+### Design decisions
+
+**Context prefixes on chunks.** Each chunk is embedded as `<title> > <heading path>`
+followed by its text. A chunk that says "they must be collected by 17:30" is ambiguous
+on its own; prefixed with "Transport Rules > Aftercare learners" it matches the question
+it answers. The prefix is embedded only: the stored and cited text is the original.
+
+**The audience filter lives in the vector query.** Filtering after retrieval would let a
+parent's search return staff chunks that are then hidden, and a top-k full of staff
+chunks would leave nothing useful. With the filter in the query (`$eq` on the audience
+list, combined with the school ID), staff-only content never leaves the vector store for
+a parent. A post-retrieval check remains as a second line of defence.
+
+**No model call without sources.** If nothing passes the similarity threshold, the API
+answers with a fixed message and never calls the model, which can't then invent an
+answer. It is also cheaper, and refusals are measured in the evaluation.
+
+**Write-then-delete version swaps.** A new version's vectors are written first, the
+registry switches the active version in one conditional transaction, and only then are
+the old vectors deleted, so a document is never missing mid-update; queries ignore
+vectors from inactive versions during the overlap. When two uploads finish out of order,
+the one ingestion accepted later wins, not the one that finished last.
+
+**The model and the index are bound.** Vectors from different models (or dimensions)
+can't be compared, so the index name includes the provider, dimension and a version, and
+each document records the model that built it. If the configured model doesn't match,
+the API refuses to answer and raises the `knowledge-embedding-model-mismatch` alarm
+rather than returning nonsense.
+
+**Questions are never logged.** People type names and personal details into questions.
+Logs record lengths, counts and IDs; the query log holds only the query ID, the asker
+and an expiry (for feedback ownership); events carry no text; API access logs omit the
+body and source IP. Tests check this with names planted in questions.
+
+**The service keeps its own copy of each source.** Ingestion's staged copy expires after
+45 days, but re-indexing (after a model change, say) needs the original. The indexer
+copies it into the knowledge bucket and records the key in the registry; that record,
+not a `HEAD` request, says the copy exists.
+
+**Re-indexing uses an internal queue message.** `admin_ops` sends `REINDEX` messages
+straight to the indexing queue rather than publishing a synthetic `DocumentAccepted`:
+only ingestion may publish with source `school.ingestion`, the staged copy an old event
+points to has usually expired, and a re-index must not announce a "new" document.
+
+**What real AWS confirmed or corrected.** S3 Vectors' `distance` for a cosine index is
+`1 - similarity` (checked by an integration test against stored vectors, since the
+documentation doesn't state it). New EventBridge rules take a few seconds to reach every
+server, so the integration tests wait for consistent delivery before uploading. GitHub
+repositories created after 15 July 2026 send a new OIDC subject format (with numeric
+owner and repository IDs), which the deploy role's trust policy accepts. Gemini reports
+thinking tokens separately from the answer, but bills them as output, so the adapter
+counts both, as Claude does.
+
+### Runbooks
 
 **Changing the embedding model (or its dimension).** Vectors from different models can't
 be compared, so a model change means a new index and re-indexing everything.
@@ -545,24 +749,53 @@ model provider. `knowledge-embedding-model-mismatch`: the configured embedding m
 didn't build the documents in the index, so the API refuses to answer rather than
 compare incompatible vectors; finish the re-index, or restore the previous `cdk.json`.
 
-API keys live in Secrets Manager, one secret per provider. Store them with
-`scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never
-touches shell history or disk), then check the real APIs with `pytest -m integration`.
+### Knowledge costs
+
+For 100 documents and 1,000 questions a month, at list prices checked 2026-11-12 in
+us-east-1:
+
+| Item | Assumption | Monthly cost |
+|---|---|---|
+| Embedding documents | ~4,000 tokens each, ~440K tokens, $0.20 per million (Gemini Embedding 2) | ~$0.09 once, and again per re-index |
+| Embedding questions | ~20 tokens each | <$0.01 |
+| Generation: Gemini 3.5 Flash-Lite | ~2,500 input and ~200 output tokens per answer ($0.30 / $2.50 per million) | ~$1.25 |
+| Generation: Claude Haiku 5.5 (alternative) | same tokens ($0.10 / $0.50 per million) | ~$0.35 |
+| S3 Vectors | ~1,000 vectors of ~6 KB: storage $0.06/GB-month, writes $0.20/GB, queries $2.50 per million | <$0.01 |
+| API Gateway (HTTP API) | 1,000 requests | <$0.01 |
+| Lambda (arm64) | ~3 s at 1 GB per question, indexing negligible | ~$0.04, or free within the free tier |
+| Secrets Manager | one or two provider keys at $0.40 each | $0.40–$0.80 |
+| Cognito (Essentials) | free up to 10,000 monthly active users | $0 |
+
+So roughly $1–2 a month on top of the ingestion service's idle ~$1, dominated by
+generation and the secrets. On Google's free tier, the Gemini lines cost nothing.
 
 ## Cost and teardown
 
-Idle, the service costs about US$1 a month, for the KMS key that encrypts the alert
-topic. Everything else is pay-per-use (Lambda, SQS, on-demand DynamoDB, S3, EventBridge,
-CloudWatch metrics and alarms) and costs cents at school volumes; point-in-time recovery
-on the two small tables adds very little.
+Idle, the ingestion service costs about US$1 a month, for the KMS key that encrypts the
+alert topic, and the knowledge service adds $0.40 per provider key in Secrets Manager.
+Everything else is pay-per-use and costs cents at school volumes: see
+[Knowledge costs](#knowledge-costs) for a worked month.
 
-The bucket is versioned, so empty it, including old versions, before destroying the stacks:
+To remove everything, empty the two buckets first (CloudFormation won't delete a bucket
+that still has objects; the ingestion bucket is versioned, so old versions go too), then
+destroy the stacks and delete the provider keys, which the script created outside CDK:
 
 ```bash
-BUCKET=school-ingestion-$(aws sts get-caller-identity --query Account --output text)-$(aws configure get region)
-python3 -c "import boto3,sys; boto3.resource('s3').Bucket(sys.argv[1]).object_versions.delete()" "$BUCKET"
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+REGION=$(aws configure get region)
+python3 -c "import boto3,sys; boto3.resource('s3').Bucket(sys.argv[1]).object_versions.delete()" \
+  "school-ingestion-${ACCOUNT}-${REGION}"
+aws s3 rm "s3://school-knowledge-docs-${ACCOUNT}-${REGION}" --recursive
 cdk destroy --all
+for key in gemini anthropic voyage; do
+  aws secretsmanager delete-secret --secret-id "knowledge/${key}" \
+    --force-delete-without-recovery 2>/dev/null || true
+done
 ```
+
+The vector index and its bucket, the registry tables and the user pool are deleted with
+the stacks. If you set up CI deployment, also delete the `school-ingestion-github-deploy`
+role and, if nothing else uses it, the GitHub OIDC provider in IAM.
 
 ## Known limitations and future work
 
@@ -574,7 +807,13 @@ cdk destroy --all
 - **Per-tenant upload quotas.**
 - **A DLQ consumer** that publishes `ImportFailed` with `MOVED_TO_DLQ`, so uploaders hear
   about files that failed for unexpected reasons.
-- **OCR for scanned PDFs**, a knowledge-service concern.
+- **OCR for scanned PDFs**: they are rejected as `NO_EXTRACTABLE_TEXT` today.
+- **Re-indexing without downtime**: an embedding-model change replaces the index, and
+  questions get the "contact the office" reply until the re-index finishes. Keeping the
+  old index until the new one is complete would need two indexes side by side.
+- **Streaming answers** and conversation history: each question is answered on its own.
+- **Linked parent accounts**: parents in one household should share a household ID linked
+  to their children, while each keeps their own login.
 - **Deleted versions**: without `s3:ListBucket`, S3 may answer 403 rather than 404 for a
   permanently deleted version, so such a file is retried into the DLQ instead of being
   reported as `UNREADABLE`.

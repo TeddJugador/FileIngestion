@@ -120,16 +120,7 @@ class QueryService:
         except ProviderError as exc:
             return self._provider_error(caller, query_id, started, exc)
 
-        retrieval_started = time.monotonic()
-        hits = self.store.query(
-            vector,
-            top_k=top_k * 2,
-            filter=audience_filter(caller.school_id, caller.audiences),  # authorization
-        )
-        self._metric(
-            "RetrievalLatency", (time.monotonic() - retrieval_started) * 1000, "Milliseconds"
-        )
-        selected = self._select(caller, hits, top_k)
+        selected = self._retrieve_for(caller, vector, top_k)
         top_score = max((h.similarity for h in selected), default=0.0)
 
         if not selected:  # no sources: no model call (cost, and no ungrounded answers)
@@ -180,6 +171,24 @@ class QueryService:
             tokens=(result.input_tokens, result.output_tokens),
         )
         return AskResult(query_id, Outcome.ANSWERED, answer, grounded, citations)
+
+    def retrieve(self, caller: Caller, question: str, top_k: int = DEFAULT_TOP_K) -> list[QueryHit]:
+        """The sources ``ask`` would give the model, best first, without calling it.
+
+        Used by the evaluation harness to measure retrieval on its own. Shares every step
+        with ``ask``: embedding, the audience-filtered search, active-version and
+        threshold checks and the per-section cap."""
+        return self._retrieve_for(caller, self.embedder.embed_query(question), top_k)
+
+    def _retrieve_for(self, caller: Caller, vector: list[float], top_k: int) -> list[QueryHit]:
+        started = time.monotonic()
+        hits = self.store.query(
+            vector,
+            top_k=top_k * 2,
+            filter=audience_filter(caller.school_id, caller.audiences),  # authorization
+        )
+        self._metric("RetrievalLatency", (time.monotonic() - started) * 1000, "Milliseconds")
+        return self._select(caller, hits, top_k)
 
     def _select(self, caller: Caller, hits: list[QueryHit], top_k: int) -> list[QueryHit]:
         documents = self.registry.get_documents(

@@ -55,7 +55,7 @@ class GenerationResult:
     provider: str
     model_id: str
     input_tokens: int
-    output_tokens: int
+    output_tokens: int  # billed output tokens, including any thinking tokens
     truncated: bool = False  # stopped at max_tokens: the answer may be cut short
     stop_reason: str = ""
     extra: dict[str, int] = field(default_factory=dict)

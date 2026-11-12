@@ -147,7 +147,8 @@ def test_generation_request_and_response() -> None:
         "thinkingConfig": {"thinkingLevel": "minimal"},
     }
     assert result.text == "Fees are due on the 1st [S1]."  # thought parts excluded
-    assert (result.input_tokens, result.output_tokens) == (900, 12)
+    # output_tokens is what's billed: the answer (12) plus thinking (30).
+    assert (result.input_tokens, result.output_tokens) == (900, 42)
     assert result.extra == {"thinking_tokens": 30}
     assert result.truncated is False
     assert result.provider == "GEMINI"

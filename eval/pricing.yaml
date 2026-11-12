@@ -1,0 +1,13 @@
+# List prices (USD per million tokens) used to estimate cost per question.
+# Free tiers cost $0; these are what the same traffic costs on a paid plan.
+checked: 2026-11-12
+sources:
+  gemini: https://ai.google.dev/gemini-api/docs/pricing
+  claude: https://platform.claude.com/docs/en/about-claude/pricing
+embedding:
+  gemini-embedding-2: 0.20
+generation:            # [input, output]; output includes thinking tokens
+  gemini-3.5-flash-lite: [0.30, 2.50]
+  gemini-3.5-flash: [1.50, 9.00]
+  claude-haiku-5-5: [0.10, 0.50]     # prompts up to 100K tokens
+  claude-sonnet-5-5: [2.00, 10.00]
