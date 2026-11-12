@@ -9,6 +9,7 @@ and costs a fraction of a cent. Uses school SCH-999, like the ingestion test.
 from __future__ import annotations
 
 import hashlib
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -93,13 +94,22 @@ def test_uploaded_document_is_indexed(deployed: Deployed) -> None:
         f"doc-{hashlib.sha256(f'{SCHOOL}/{relative_path.lower()}'.encode()).hexdigest()[:12]}"
     )
 
+    # Source of truth first: the document's first vector exists in S3 Vectors.
+    key = f"{document_id}#{version}#00000"
+    vector = _wait_for_vector(deployed, key)
+    assert vector["metadata"]["school_id"] == SCHOOL
+    assert vector["metadata"]["audience"] == ["PARENT"]
+    assert "Market Square" in vector["metadata"]["chunk_text"]
+
+    # Then the announcement. Indexing is already proven above, so a failure here means
+    # only the event delivery (or its capture) went wrong.
     event = deployed.capture.wait_for(
         lambda e: (
             e["detail"]["data"].get("version") == version
             and e["detail"]["data"].get("documentId") == document_id
         ),
-        timeout=TIMEOUT_SECONDS,
-        what=f"{document_id} {version}",
+        timeout=120,
+        what=f"DocumentIndexed for {document_id} (vectors already stored)",
     )
     assert event["detail-type"] == "DocumentIndexed", event["detail"]["data"]
     data = event["detail"]["data"]
@@ -109,16 +119,17 @@ def test_uploaded_document_is_indexed(deployed: Deployed) -> None:
     assert data["indexName"] == deployed.index_name
     assert data["audience"] == ["PARENT"]
 
-    try:
-        vectors = deployed.s3vectors.get_vectors(
+
+def _wait_for_vector(deployed: Deployed, key: str) -> dict[str, Any]:
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        found = deployed.s3vectors.get_vectors(
             vectorBucketName=deployed.vector_bucket,
             indexName=deployed.index_name,
-            keys=[f"{document_id}#{version}#00000"],
+            keys=[key],
             returnMetadata=True,
         )["vectors"]
-    except ClientError as exc:
-        pytest.skip(f"cannot read vectors with these credentials: {exc.response['Error']['Code']}")
-    (vector,) = vectors
-    assert vector["metadata"]["school_id"] == SCHOOL
-    assert vector["metadata"]["audience"] == ["PARENT"]
-    assert "Market Square" in vector["metadata"]["chunk_text"]
+        if found:
+            return dict(found[0])
+        time.sleep(3)
+    pytest.fail(f"vector {key} not stored after {TIMEOUT_SECONDS}s: check the indexer logs")

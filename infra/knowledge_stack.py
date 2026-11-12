@@ -16,6 +16,7 @@ from infra.constructs.dependencies_layer import DependenciesLayer
 from infra.constructs.knowledge.document_bucket import KnowledgeDocumentBucket
 from infra.constructs.knowledge.indexer_function import IndexerFunction
 from infra.constructs.knowledge.indexing_queue import IndexingQueue
+from infra.constructs.knowledge.query_api import QueryApi
 from infra.constructs.knowledge.registry import KnowledgeTables
 from infra.constructs.knowledge.vector_store import VectorStore
 from infra.knowledge_config import KnowledgeConfig
@@ -31,6 +32,7 @@ class KnowledgeStack(Stack):
         event_bus: events.IEventBus,
         ops_alerts_topic: sns.ITopic,
         user_pool: cognito.IUserPool,
+        user_pool_clients: list[cognito.IUserPoolClient],
         ingestion_bucket: s3.IBucket,
         layer_asset_path: str | Path,
         **kwargs: Any,
@@ -71,6 +73,22 @@ class KnowledgeStack(Stack):
             event_bus=event_bus,
             layer=self.dependencies_layer,
         )
+
+        self.query_api = QueryApi(
+            self,
+            "Query",
+            config=config,
+            user_pool=user_pool,
+            user_pool_clients=user_pool_clients,
+            knowledge_bucket=self.documents.bucket,
+            vectors=self.vectors,
+            registry=self.tables.registry,
+            query_log=self.tables.query_log,
+            event_bus=event_bus,
+            layer=self.dependencies_layer,
+        )
+        CfnOutput(self, "ApiUrl", value=self.query_api.url)
+        CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id)
 
         CfnOutput(self, "KnowledgeBucketName", value=self.documents.bucket.bucket_name)
         CfnOutput(self, "VectorBucketName", value=self.vectors.bucket_name)

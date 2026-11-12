@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aws_cdk import ArnFormat, Duration, RemovalPolicy, Stack
+from aws_cdk import ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_events as events
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
@@ -109,3 +109,7 @@ class SharedStack(Stack):
         self.user_pool = self.users.user_pool
         self.web_client = self.users.web_client
         self.test_client = self.users.test_client
+        CfnOutput(self, "UserPoolId", value=self.user_pool.user_pool_id)
+        CfnOutput(self, "WebClientId", value=self.web_client.user_pool_client_id)
+        if self.test_client is not None:
+            CfnOutput(self, "TestClientId", value=self.test_client.user_pool_client_id)

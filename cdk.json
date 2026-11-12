@@ -26,9 +26,9 @@
     "embeddingModel": "gemini-embedding-2",
     "embeddingDimension": 768,
     "vectorIndexVersion": 1,
-    "generationProvider": "CLAUDE",
-    "generationModel": "claude-haiku-5-5",
-    "generationThinking": "disabled",
+    "generationProvider": "GEMINI",
+    "generationModel": "gemini-3.5-flash-lite",
+    "generationThinking": "minimal",
     "generationEffort": "low",
     "corsAllowedOrigins": [
       "http://localhost:3000"

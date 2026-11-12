@@ -442,7 +442,7 @@ documents, with citations (retrieval-augmented generation). It consumes the
 | b | provider interfaces, fakes, Gemini / Voyage / Claude adapters | done |
 | c | text extraction and chunking | done |
 | d | indexer end to end | done |
-| e | query API | not started |
+| e | query API | done |
 | f | admin operations, alarms, metrics | not started |
 | g | evaluation harness and README | not started |
 
@@ -478,6 +478,37 @@ mid-update. When two uploads of one document finish out of order, the one ingest
 accepted later wins. Failures that won't fix themselves (a scanned PDF, a hash mismatch)
 publish `DocumentIndexingFailed` at once; provider or vector-store errors are retried and
 reported only if the last attempt fails.
+
+The query API (`POST /ask`, `POST /feedback`, admin-only `GET /documents` and
+`POST /documents/{documentId}/retire`) sits behind an HTTP API with a Cognito JWT
+authorizer. Send the **ID token** (only it carries `custom:school_id`). The caller's
+school and role come from the token, never the request. The audience filter is part of
+the vector query itself, so a parent's question only ever searches chunks of documents
+whose audience includes `PARENT`; if nothing relevant is found, no model is called.
+
+```bash
+POOL=$(aws cloudformation describe-stacks --stack-name SchoolSharedStack \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
+CLIENT=$(aws cloudformation describe-stacks --stack-name SchoolSharedStack \
+  --query "Stacks[0].Outputs[?OutputKey=='TestClientId'].OutputValue" --output text)
+API=$(aws cloudformation describe-stacks --stack-name SchoolKnowledgeStack \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+
+# A test parent (dev only; the password must meet the pool's policy)
+aws cognito-idp admin-create-user --user-pool-id "$POOL" --username parent@example.com \
+  --message-action SUPPRESS --user-attributes Name=email,Value=parent@example.com \
+  Name=email_verified,Value=true Name=custom:school_id,Value=SCH-001
+aws cognito-idp admin-set-user-password --user-pool-id "$POOL" --username parent@example.com \
+  --password 'Choose-A-Str0ng-Pass!' --permanent
+aws cognito-idp admin-add-user-to-group --user-pool-id "$POOL" --username parent@example.com \
+  --group-name parent
+
+TOKEN=$(aws cognito-idp initiate-auth --client-id "$CLIENT" --auth-flow USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME=parent@example.com,PASSWORD='Choose-A-Str0ng-Pass!' \
+  --query AuthenticationResult.IdToken --output text)
+curl -s -X POST "$API/ask" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"question": "What happens if my child is late three times?"}'
+```
 
 API keys live in Secrets Manager, one secret per provider. Store them with
 `scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never

@@ -1,10 +1,11 @@
 """Capture events from SchoolEventBus in integration tests.
 
-A temporary rule delivers matching events to a temporary SQS queue. New rules take a
-few seconds to start delivering, and the pipeline can finish faster than that (an
-indexing run takes ~3 s), so ``EventCapture`` proves the rule is live first: it sends a
-canary event the rule also matches and waits until it arrives. Only then does the test
-upload anything.
+A temporary rule delivers matching events to a temporary SQS queue. New rules reach
+EventBridge's servers gradually, and the pipeline can finish faster than that (an
+indexing run takes ~3 s). One canary arriving only proves that one server has the rule,
+so ``EventCapture`` waits until canaries arrive several times in a row, spread over
+~20 s, before the test uploads anything. Permanent rules (real consumers) don't have
+this problem; only tests that create rules on the fly do.
 """
 
 from __future__ import annotations
@@ -22,7 +23,9 @@ import pytest
 
 BUS = "SchoolEventBus"
 CANARY_SOURCE = "integration.test.canary"
-RULE_READY_TIMEOUT_SECONDS = 90
+RULE_READY_TIMEOUT_SECONDS = 120
+CONSECUTIVE_CANARIES = 3
+CANARY_SPACING_SECONDS = 10
 
 
 @dataclass
@@ -93,9 +96,10 @@ def capture_events(*, source: str, school_id: str) -> Iterator[EventCapture]:
 
 
 def _wait_until_rule_delivers(events: Any, sqs: Any, queue_url: str, school_id: str) -> None:
-    canary_id = uuid.uuid4().hex
     deadline = time.monotonic() + RULE_READY_TIMEOUT_SECONDS
+    in_a_row = 0
     while time.monotonic() < deadline:
+        canary_id = uuid.uuid4().hex
         events.put_events(
             Entries=[
                 {
@@ -108,11 +112,27 @@ def _wait_until_rule_delivers(events: Any, sqs: Any, queue_url: str, school_id: 
                 }
             ]
         )
+        if _canary_arrived(sqs, queue_url, canary_id):
+            in_a_row += 1
+            if in_a_row == CONSECUTIVE_CANARIES:
+                return
+            time.sleep(CANARY_SPACING_SECONDS)
+        else:
+            in_a_row = 0
+    pytest.fail("the temporary EventBridge rule never delivered consistently")
+
+
+def _canary_arrived(sqs: Any, queue_url: str, canary_id: str) -> bool:
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
         response = sqs.receive_message(
-            QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=5
+            QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=2
         )
         for message in response.get("Messages", []):
             body = json.loads(message["Body"])
-            if body.get("detail", {}).get("data", {}).get("canary") == canary_id:
-                return
-    pytest.fail("the temporary EventBridge rule never started delivering")
+            if body.get("source") == CANARY_SOURCE:
+                # Canaries are consumed so they never crowd out the events under test.
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message["ReceiptHandle"])
+                if body.get("detail", {}).get("data", {}).get("canary") == canary_id:
+                    return True
+    return False

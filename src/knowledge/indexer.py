@@ -42,6 +42,7 @@ from knowledge.sources import (
 from knowledge.tokens import estimate_tokens
 from knowledge.vector_metadata import MetadataTooLargeError, build_metadata, vector_key
 from knowledge.vector_store import VectorRecord, VectorStore, VectorStoreError
+from knowledge.versions import VersionCleaner
 
 
 class Outcome(StrEnum):
@@ -316,6 +317,14 @@ class Indexer:
                 "vector_keys_key": list_key,
             },
         )
+        self.registry.set_document_fields(
+            job.school_id,
+            job.document_id,
+            {
+                "embedding_model": self.settings.embedding_model_id,
+                "index_name": self.settings.index_name,
+            },
+        )
         self._record_success(len(keys), tokens, started)
         self.logger.info("document reindexed", chunk_count=len(keys))
         return IndexResult(Outcome.REINDEXED, len(keys))
@@ -368,15 +377,9 @@ class Indexer:
 
     def _discard_version(self, school_id: str, document_id: str, version: str) -> None:
         """Delete a version's vectors (via its key list), the list and the source copy."""
-        record = self.registry.get_version(school_id, document_id, version)
-        if record is None:
-            return
-        if record.vector_keys_key:
-            keys = self.sources.get_vector_keys(record.vector_keys_key)
-            if record.index_name in ("", self.settings.index_name):
-                self.store.delete(keys)  # vectors in an older index go with that index
-            self.sources.delete(record.vector_keys_key)
-        self.sources.delete(record.source_key)
+        VersionCleaner(self.registry, self.sources, self.store, self.settings.index_name).discard(
+            school_id, document_id, version
+        )
 
     # --- failures -----------------------------------------------------------------------
 

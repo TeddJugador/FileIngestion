@@ -64,6 +64,7 @@ def build_stacks(
         event_bus=shared.event_bus,
         ops_alerts_topic=shared.ops_alerts_topic,
         user_pool=shared.user_pool,
+        user_pool_clients=[c for c in (shared.web_client, shared.test_client) if c is not None],
         ingestion_bucket=ingestion.storage.bucket,
         layer_asset_path=knowledge_layer_asset_path,
     )
