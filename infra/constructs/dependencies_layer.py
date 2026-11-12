@@ -22,12 +22,20 @@ LAMBDA_RUNTIME = lambda_.Runtime(f"python{PYTHON_VERSION}", lambda_.RuntimeFamil
 LAMBDA_ARCHITECTURE = lambda_.Architecture.ARM_64
 
 DEFAULT_LAYER_ASSET_PATH = PROJECT_ROOT / "build" / "layer"
+DEFAULT_KNOWLEDGE_LAYER_ASSET_PATH = PROJECT_ROOT / "build" / "knowledge-layer"
 
 
 class DependenciesLayer(Construct):
     """Wraps the pre-built layer directory as a Lambda LayerVersion."""
 
-    def __init__(self, scope: Construct, construct_id: str, *, asset_path: str | Path) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        asset_path: str | Path,
+        description: str = "Ingestion deps (Powertools, pydantic, ijson, python-ulid)",
+    ) -> None:
         super().__init__(scope, construct_id)
 
         path = Path(asset_path)
@@ -43,9 +51,6 @@ class DependenciesLayer(Construct):
             code=lambda_.Code.from_asset(str(path)),
             compatible_runtimes=[LAMBDA_RUNTIME],
             compatible_architectures=[LAMBDA_ARCHITECTURE],
-            description=(
-                f"Ingestion deps (Powertools, pydantic, ijson, python-ulid) "
-                f"for python{PYTHON_VERSION}/arm64"
-            ),
+            description=f"{description} for python{PYTHON_VERSION}/arm64",
             removal_policy=RemovalPolicy.DESTROY,
         )

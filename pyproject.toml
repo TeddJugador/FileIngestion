@@ -19,6 +19,11 @@ runtime = [
     "email-validator==2.3.0",
     "boto3>=1.40",
 ]
+knowledge = [
+    "pypdf==6.21.4",
+    "python-docx==1.2.0",
+    "httpx==0.28.1",
+]
 dev = [
     "pytest>=8",
     "moto[s3,sqs,dynamodb,events]>=5.1",
@@ -30,7 +35,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
-addopts = "-ra --strict-markers -m 'not integration'"
+addopts = "-ra --strict-markers"
 markers = [
     "slow: slow under moto, but still run in CI",
     "integration: deploys to a real AWS account (opt-in: pytest -m integration)",

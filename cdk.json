@@ -20,6 +20,18 @@
       "aws",
       "aws-cn"
     ],
-    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
+    "stage": "dev",
+    "embeddingProvider": "gemini",
+    "embeddingModel": "gemini-embedding-2",
+    "embeddingDimension": 768,
+    "vectorIndexVersion": 1,
+    "generationProvider": "CLAUDE",
+    "generationModel": "claude-haiku-5-5",
+    "generationThinking": "disabled",
+    "generationEffort": "low",
+    "corsAllowedOrigins": [
+      "http://localhost:3000"
+    ]
   }
 }

@@ -7,7 +7,8 @@ every test in this package. Templates are read from the cloud assembly (not
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import json
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,23 @@ from aws_cdk.assertions import Template
 
 from app import build_stacks
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def cdk_context(**overrides: Any) -> dict[str, Any]:
+    """The context ``cdk synth`` would use (cdk.json), plus overrides."""
+    context: dict[str, Any] = json.loads((PROJECT_ROOT / "cdk.json").read_text())["context"]
+    return {**context, **overrides}
+
 
 @dataclass(frozen=True)
 class Synthesized:
     shared: Template
     ingestion: Template
+    knowledge: Template
     shared_json: dict[str, Any]
     ingestion_json: dict[str, Any]
+    knowledge_json: dict[str, Any]
 
 
 @pytest.fixture(scope="session")
@@ -36,24 +47,49 @@ def fake_layer_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return root
 
 
+SynthFn = Callable[..., dict[str, dict[str, Any]]]
+
+
 @pytest.fixture(scope="session")
-def synthesized(fake_layer_dir: Path) -> Iterator[Synthesized]:
-    mp = pytest.MonkeyPatch()
-    # Environment-agnostic synth: account/region must come out as pseudo parameters.
-    mp.delenv("CDK_DEFAULT_ACCOUNT", raising=False)
-    mp.delenv("CDK_DEFAULT_REGION", raising=False)
-    app = cdk.App()
-    stacks = build_stacks(app, layer_asset_path=fake_layer_dir)
-    assembly = app.synth()  # raises if cdk-nag reports anything unacknowledged
-    shared_json = assembly.get_stack_by_name(stacks.shared.stack_name).template
-    ingestion_json = assembly.get_stack_by_name(stacks.ingestion.stack_name).template
-    yield Synthesized(
-        shared=Template.from_json(shared_json),
-        ingestion=Template.from_json(ingestion_json),
-        shared_json=shared_json,
-        ingestion_json=ingestion_json,
+def synth(fake_layer_dir: Path) -> SynthFn:
+    """Synthesize the whole app with the given context overrides; templates by stack."""
+
+    def run(**context: Any) -> dict[str, dict[str, Any]]:
+        mp = pytest.MonkeyPatch()
+        # Environment-agnostic synth: account/region must come out as pseudo parameters.
+        mp.delenv("CDK_DEFAULT_ACCOUNT", raising=False)
+        mp.delenv("CDK_DEFAULT_REGION", raising=False)
+        try:
+            app = cdk.App(context=cdk_context(**context))
+            stacks = build_stacks(
+                app, layer_asset_path=fake_layer_dir, knowledge_layer_asset_path=fake_layer_dir
+            )
+            assembly = app.synth()  # raises if cdk-nag reports anything unacknowledged
+            return {
+                name: dict(assembly.get_stack_by_name(stack.stack_name).template)
+                for name, stack in (
+                    ("shared", stacks.shared),
+                    ("ingestion", stacks.ingestion),
+                    ("knowledge", stacks.knowledge),
+                )
+            }
+        finally:
+            mp.undo()
+
+    return run
+
+
+@pytest.fixture(scope="session")
+def synthesized(synth: SynthFn) -> Iterator[Synthesized]:
+    templates = synth()
+    return Synthesized(
+        shared=Template.from_json(templates["shared"]),
+        ingestion=Template.from_json(templates["ingestion"]),
+        knowledge=Template.from_json(templates["knowledge"]),
+        shared_json=templates["shared"],
+        ingestion_json=templates["ingestion"],
+        knowledge_json=templates["knowledge"],
     )
-    mp.undo()
 
 
 def resources_of_type(template: dict[str, Any], resource_type: str) -> dict[str, Any]:

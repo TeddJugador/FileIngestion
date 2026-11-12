@@ -34,7 +34,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[infra,runtime,dev]"
+          pip install -e ".[infra,runtime,knowledge,dev]"
           npm install -g aws-cdk
 
       - name: Lint
@@ -84,7 +84,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[infra,runtime,dev]"
+          pip install -e ".[infra,runtime,knowledge,dev]"
           npm install -g aws-cdk
 
       - name: Build arm64 dependency layer

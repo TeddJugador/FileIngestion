@@ -1,6 +1,6 @@
 # School ingestion service
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/TeddJugador/FileIngestion/actions/workflows/ci.yml)
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 
 A serverless bulk-file ingestion service for a multi-tenant school management system on
 AWS, written in Python with the AWS CDK. School staff upload class rosters, marks and fee
@@ -428,6 +428,42 @@ errors: SQS still retries the message, and the worker-errors alarm sees it (a qu
 reported partial failure would not). And the cross-stack references between the two
 stacks are pinned to CDK's "strong" mode, which stops the shared stack from being deleted
 while the ingestion stack still uses it.
+
+## Knowledge service (in progress)
+
+A second service in this CDK app answers staff and parents' questions from school
+documents, with citations (retrieval-augmented generation). It consumes the
+`DocumentAccepted` events published above. Specification:
+[`docs/KNOWLEDGE_SERVICE_BUILD_PROMPT.md`](docs/KNOWLEDGE_SERVICE_BUILD_PROMPT.md).
+
+| Phase | Scope | State |
+|---|---|---|
+| a | Cognito user pool, knowledge bucket, S3 Vectors index, registry tables, indexing queue, arm64 layer | done |
+| b | provider interfaces, fakes, Gemini / Voyage / Claude adapters | done |
+| c | text extraction and chunking | not started |
+| d | indexer end to end | not started |
+| e | query API | not started |
+| f | admin operations, alarms, metrics | not started |
+| g | evaluation harness and README | not started |
+
+Models and the vector index are configured in `cdk.json` (`embeddingProvider`,
+`embeddingModel`, `embeddingDimension`, `vectorIndexVersion`, `generationProvider`,
+`generationModel`, `generationThinking`, `generationEffort`). The index name is derived from them, for example
+`docs-gemini-768-v1`, because an index only makes sense for the model that produced its
+vectors. `scripts/build_layer.sh` now builds both dependency layers.
+
+Provider choices, checked against each provider's documentation on 2026-11-11:
+
+| Role | Default | Notes |
+|---|---|---|
+| Embeddings | Gemini `gemini-embedding-2`, 768 dimensions | no `task_type`: retrieval hints go in the text (`title: … \| text: …` for documents, `task: question answering \| query: …` for questions); batches via `batchEmbedContents` (max 100) |
+| Embeddings (alternative) | Voyage `voyage-4`, 1024 dimensions | `input_type` document/query; only 256/512/1024/2048 dimensions |
+| Generation | Claude `claude-haiku-5-5`, thinking `disabled`, effort `low` | no `temperature` on current Claude models; thinking counts toward the 600-token answer budget |
+| Generation (alternative) | Gemini `gemini-3.5-flash-lite`, thinking `minimal` | `maxOutputTokens` includes thinking tokens |
+
+API keys live in Secrets Manager, one secret per provider. Store them with
+`scripts/set_provider_key.sh gemini|voyage|anthropic` (hidden prompt; the key never
+touches shell history or disk), then check the real APIs with `pytest -m integration`.
 
 ## Cost and teardown
 

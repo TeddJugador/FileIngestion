@@ -12,13 +12,16 @@ from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subscriptions
 from constructs import Construct
 
+from infra.constructs.user_directory import UserDirectory
+
 EVENT_BUS_NAME = "SchoolEventBus"
 ARCHIVE_RETENTION = Duration.days(30)
 OPS_ALERTS_TOPIC_NAME = "ops-alerts"
 
 
 class SharedStack(Stack):
-    """Exposes ``event_bus`` and ``ops_alerts_topic`` as stack properties.
+    """Exposes ``event_bus``, ``ops_alerts_topic``, ``user_pool``, ``web_client`` and
+    ``test_client`` (dev stage only) as stack properties.
 
     Other stacks receive them as constructor props; CDK wires the cross-stack
     references itself (no hand-named CloudFormation exports).
@@ -30,6 +33,7 @@ class SharedStack(Stack):
         construct_id: str,
         *,
         alert_email: str | None = None,
+        stage: str = "dev",
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -99,3 +103,9 @@ class SharedStack(Stack):
         if alert_email:
             # AWS emails a confirmation link; alerts arrive only after it is clicked.
             self.ops_alerts_topic.add_subscription(subscriptions.EmailSubscription(alert_email))
+
+        # Users for the whole system (the knowledge API is the first consumer).
+        self.users = UserDirectory(self, "Users", stage=stage)
+        self.user_pool = self.users.user_pool
+        self.web_client = self.users.web_client
+        self.test_client = self.users.test_client

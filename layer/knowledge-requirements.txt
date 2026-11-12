@@ -1,0 +1,12 @@
+# Dependencies layer for the knowledge-service Lambdas (arm64, built by scripts/build_layer.sh).
+# Pinned for reproducible builds. boto3/botocore come from the Lambda runtime.
+# Providers are called over HTTPS with httpx (no provider SDKs): smaller layer, one retry
+# policy for every provider, and no extra compiled dependencies.
+aws-lambda-powertools[tracer]==3.40.0
+pydantic==2.14.3
+python-ulid==4.1.0
+httpx==0.28.1
+pypdf==6.21.4
+python-docx==1.2.0
+# python-docx's XML parser; compiled, so pinned and checked for aarch64 by the build.
+lxml==6.1.3

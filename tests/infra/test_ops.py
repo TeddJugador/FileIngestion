@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import aws_cdk as cdk
-import pytest
-
-from app import build_stacks
-from tests.infra.conftest import Synthesized, as_list, resources_of_type
+from tests.infra.conftest import Synthesized, SynthFn, as_list, resources_of_type
 
 
 def _alarm(s: Synthesized, name: str) -> dict[str, Any]:
@@ -149,24 +144,12 @@ def test_replay_role_has_no_wildcard_resources(synthesized: Synthesized) -> None
 # --- alert delivery ------------------------------------------------------------------
 
 
-def _shared_template(fake_layer_dir: Path, **context: Any) -> dict[str, Any]:
-    mp = pytest.MonkeyPatch()
-    mp.delenv("CDK_DEFAULT_ACCOUNT", raising=False)
-    mp.delenv("CDK_DEFAULT_REGION", raising=False)
-    try:
-        app = cdk.App(context=context)
-        stacks = build_stacks(app, layer_asset_path=fake_layer_dir)
-        return dict(app.synth().get_stack_by_name(stacks.shared.stack_name).template)
-    finally:
-        mp.undo()
-
-
 def test_no_subscription_by_default(synthesized: Synthesized) -> None:
     assert resources_of_type(synthesized.shared_json, "AWS::SNS::Subscription") == {}
 
 
-def test_alert_email_context_adds_an_email_subscription(fake_layer_dir: Path) -> None:
-    template = _shared_template(fake_layer_dir, alertEmail="ops@example.org")
+def test_alert_email_context_adds_an_email_subscription(synth: SynthFn) -> None:
+    template = synth(alertEmail="ops@example.org")["shared"]
     (subscription,) = resources_of_type(template, "AWS::SNS::Subscription").values()
     assert subscription["Properties"]["Protocol"] == "email"
     assert subscription["Properties"]["Endpoint"] == "ops@example.org"
